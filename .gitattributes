@@ -1,0 +1,5 @@
+* text=auto
+# szablon importu: separator ; i polskie znaki – zachowaj bajt w bajt
+*.csv -text
+*.svg text
+*.html text

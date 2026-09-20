@@ -1,0 +1,9 @@
+﻿ip;hostname;type;roles;tier;env;os;location;owner;siem;method;index;retention_days;gb_per_day;verified;tags;note
+10.10.0.11;dc01.corp.example;win;dc|dns;T0;prod;Windows Server 2022;DC Warszawa;Zespół AD;Splunk;Splunk UF;wineventlog;365;4.5;2026-09-01;krytyczny;
+10.10.0.31;pvwa01.corp.example;win;pam;T0;prod;Windows Server 2022;DC Warszawa;Zespół PAM;Splunk;Splunk UF;pam;365;0.8;;;
+172.16.10.11;web01.dmz.corp.example;lin;web;T1;prod;Ubuntu 22.04;DMZ;Zespół WWW;Wazuh;Wazuh agent;;90;;;internet;
+10.20.1.30;rtr-krakow;mt;edge;T1;prod;RB5009 RouterOS 7.15;Kraków;Sieć;Splunk;Syslog → relay;network;180;0.2;;oddział;
+10.20.3.114;sw-acc-2-14;hp;access;T2;prod;Aruba 2930F;Biuro, piętro 2;Sieć;Splunk;Syslog → relay;network;90;;;;
+10.20.4.33;ap-magazyn-03;ubnt;ap;T2;prod;UniFi U6 Pro;Magazyn;Sieć;Brak;;;;;;;
+10.99.0.17;idrac-esxi-07;bmc;oob;T0;prod;iDRAC 9;DC Warszawa;Wirtualizacja;Brak;;;;;;;do podłączenia
+;printer-hr-01.corp.example;mfp;mfp;T2;prod;HP LaserJet M507;Biuro HR;IT;Brak;;;;;;;bez stałego IP: kluczem jest hostname

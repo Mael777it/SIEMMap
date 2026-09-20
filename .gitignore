@@ -1,3 +1,25 @@
-# dane z aplikacji nie trafiają do repozytorium
-*.json
-*.csv
+# Dane z aplikacji – NIGDY nie commituj (nazwy hostów, adresy IP, stany zbierania, dziennik zmian)
+siemmap-sejf-*.json
+siemmap-dane-jawne-*.json
+*JAWNY*.json
+*.jawny.json
+SIEMMap-klucz-*.json
+SIEMMap-hosty-*.csv
+SIEMMap-dziennik-*.csv
+SIEMMap-walidacja-*.csv
+siem_assets.csv
+pokrycie-siem-*.md
+*inwentarz*.csv
+
+# Pobrane pakiety i konfiguracje (mogą zawierać nazwy hostów)
+siemmap-*.zip
+siemmap-*.md
+SIEMMap-import-szablon.zip
+
+# System / edytory
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+__pycache__/
