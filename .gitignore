@@ -1,0 +1,3 @@
+# dane z aplikacji nie trafiają do repozytorium
+*.json
+*.csv
