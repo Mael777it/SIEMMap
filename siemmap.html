@@ -407,7 +407,7 @@ pre.cfg-file{max-height:640px}
  * na warunkach licencji MIT (pełna treść: LICENSE w repozytorium oraz „Licencja i autor” w stopce aplikacji).
  * Projekt prywatny autora, tworzony hobbystycznie w czasie wolnym, rozwijany jako otwarte oprogramowanie.
  */
-const APP = Object.freeze({name:"SIEMMap", version:"3.4", author:"Marcin Lewandowski", email:"marcin.lewandowski.x@gmail.com", license:"MIT", repo:"https://github.com/mael777it/SIEMMap", copyright:"Copyright (c) 2026 Marcin Lewandowski"});
+const APP = Object.freeze({name:"SIEMMap", version:"3.6", author:"Marcin Lewandowski", email:"marcin.lewandowski.x@gmail.com", license:"MIT", repo:"https://github.com/mael777it/SIEMMap", copyright:"Copyright (c) 2026 Marcin Lewandowski"});
 /* ===================== BAZA WIEDZY =====================
    Pozycja: [id, zdarzenie, źródło/ID, priorytet 1-3, wolumen L/M/H, po co, ATT&CK]
    Warstwa (podstawa typu lub rola): {name, desc, items, dont, tips, cfg:{dev,splunk,wazuh,elastic}, test, det}
@@ -1320,8 +1320,14 @@ const LIN_AUDIT = R`## /etc/audit/rules.d/50-siem.rules  (załaduj: augenrules -
 -w /etc/sudoers -p wa -k sudoers
 -w /etc/sudoers.d/ -p wa -k sudoers
 
-## SSH i persistence
+## PAM, NSS i SSH
+-w /etc/pam.d/ -p wa -k pam
+-w /etc/security/ -p wa -k pam
+-w /etc/nsswitch.conf -p wa -k pam
 -w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d/ -p wa -k sshd
+
+## persistence
 -w /root/.ssh/ -p wa -k rootkey
 -w /etc/crontab -p wa -k cron
 -w /etc/cron.d/ -p wa -k cron
@@ -1339,6 +1345,15 @@ const LIN_AUDIT = R`## /etc/audit/rules.d/50-siem.rules  (załaduj: augenrules -
 
 ## zmiana czasu
 -a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time_change
+
+## uruchamianie z katalogów zapisywalnych
+-a always,exit -F arch=b64 -F dir=/tmp -F perm=x -k tmp_exec
+-a always,exit -F arch=b64 -F dir=/var/tmp -F perm=x -k tmp_exec
+-a always,exit -F arch=b64 -F dir=/dev/shm -F perm=x -k tmp_exec
+
+## SELinux / AppArmor
+-w /etc/selinux/ -p wa -k selinux
+-w /etc/apparmor.d/ -p wa -k selinux
 
 ## ochrona samego audytu
 -w /var/log/audit/ -p wa -k auditlog
@@ -1804,6 +1819,8 @@ ruleset(name="remote") {
   if ($fromhost-ip startswith "10.20.3.") then { set $.dev = "hp"; }
   if ($fromhost-ip startswith "10.20.4.") then { set $.dev = "unifi"; }
   if ($fromhost-ip startswith "10.20.5.") then { set $.dev = "esxi"; }
+  if ($fromhost-ip == "10.10.2.20" or $fromhost-ip == "10.10.2.21") then { set $.dev = "vcenter"; }
+  if ($fromhost-ip startswith "10.10.2.3") then { set $.dev = "nsx"; }
   action(type="omfile" dynaFile="PerDevice" dirCreateMode="0750" fileCreateMode="0640")
   stop
 }
@@ -1958,8 +1975,8 @@ spanning-tree portfast bpduguard default
 `, splunk:"", wazuh:"", elastic:""}, test:[], det:[]},
   core:{name:"Rdzeń / dystrybucja (L3)", desc:"Routing między VLAN-ami, uplinki, redundancja bramy.",
    items:[
-    ["rt","Zmiany sąsiedztw routingu","%OSPF-5-ADJCHG, %BGP-5-ADJCHANGE, %EIGRP-5-NBRCHANGE",2,"L","Wstrzyknięcie tras, awarie łączy.","T1557"],
-    ["fhrp","HSRP/VRRP","%HA_EM, %HSRP-5-STATECHANGE",2,"L","Przejęcie bramy domyślnej, awarie.","T1557"],
+    ["rt","Zmiany sąsiedztw routingu","%OSPF-5-ADJCHG, %BGP-5-ADJCHANGE, %DUAL-5-NBRCHANGE",2,"L","Wstrzyknięcie tras, awarie łączy.","T1557"],
+    ["fhrp","HSRP/VRRP","%HSRP-5-STATECHANGE (starsze IOS: %STANDBY-6-STATECHANGE), %VRRP-6-STATECHANGE",2,"L","Przejęcie bramy domyślnej, awarie.","T1557"],
     ["uplink","Stany uplinków","%LINK-3-UPDOWN, %LINEPROTO-5-UPDOWN (wybrane interfejsy)",2,"L","Odłączenia uplinków, zmiany topologii.",""],
     ["vtyacl","Odrzucone połączenia do zarządzania","ACL na line vty z log (tylko deny)",1,"L","Próby dostępu do zarządzania spoza sieci administracyjnej.","T1133"]
    ], dont:[], tips:["Uwierzytelnianie OSPF/BGP (MD5/SHA) i logowanie zmian sąsiedztw. Nowy sąsiad routingu, którego nie planowałeś, to incydent."],
@@ -2235,7 +2252,7 @@ KB.ubnt = {
     ["fwlog","Firewall","Firewall rule logging (wybrane reguły)",2,"M","Odrzucenia z Internetu i między VLAN-ami.","T1046"],
     ["vpn","VPN (WireGuard, L2TP, Teleport, Site Magic)","VPN client connect/disconnect",1,"L","Kto i skąd łączył się przez VPN.","T1133"]
    ], dont:[["Logowanie wszystkich reguł allow","Tylko wybrane reguły i odrzucenia."]], tips:["Włącz IPS w trybie „Notify and Block” dla sieci serwerowych, a dla sieci gości tylko blokowanie kategorii."],
-   cfg:{dev:"Settings → CyberSecure → Intrusion Prevention: Notify and Block, wybrane sieci\nSettings → Security → Firewall Rules: „Syslog Logging” tylko na regułach drop\n",splunk:"",wazuh:"",elastic:""}, test:[], det:[]},
+   cfg:{dev:"Settings → CyberSecure → Intrusion Prevention: Notify and Block, wybrane sieci\nSettings → Policy Engine → Zones / Policy Table (9.3) albo Settings → Zones / Policy Table (9.4+): „Syslog Logging” tylko na politykach block\n",splunk:"",wazuh:"",elastic:""}, test:[], det:[]},
   sw:{name:"Switch UniFi", desc:"Przełączniki zarządzane z kontrolera.",
    items:[["stp","STP i pętle","Device events: STP/loop",2,"L","Pętle, obce switche.","T1200"],["port","Zmiany profili portów","Admin Activity: port profile",2,"L","Przepięcie portu do innego VLAN-u.","T1599"]],
    dont:[["Link up/down portów końcowych","Szum."]], tips:[], cfg:{dev:"",splunk:"",wazuh:"",elastic:""}, test:[], det:[]},
@@ -2298,7 +2315,7 @@ KB.pan = {
    ["system","Logi systemowe","pan:system (logowania admin, HA, IKE, aktualizacje)",1,"L","Logowania do zarządzania, failover, awarie tuneli.","T1078"],
    ["threat","Zagrożenia","pan:threat (vulnerability, spyware, virus, wildfire)",1,"M","Wykrycia IPS, C2, malware. Bardzo wysoka wartość w stosunku do wolumenu.","T1071, T1190"],
    ["traffic","Ruch (koniec sesji)","pan:traffic, log at session end",1,"H","Kto z kim, jaka aplikacja, ile danych. Eksfiltracja, C2, beaconing.","T1041"],
-   ["auth","Uwierzytelnienia","pan:auth (MFA, captive portal)",2,"L","Logowania użytkowników przez firewall.","T1078"]
+   ["auth","Uwierzytelnienia","pan:firewall / pan:log (type AUTH, bez dedykowanego sourcetype)",2,"L","Logowania użytkowników przez firewall.","T1078"]
   ],
   dont:[["Log at session start","Podwaja wolumen ruchu. Dane o bajtach i czasie trwania są dopiero w logu z końca sesji."],
     ["Blokady skanerów z Internetu na regule „drop all” strefy untrust","Ciągły szum. Wyłącz logowanie tej reguły albo trzymaj te logi tylko w Panoramie / Strata Logging Service."],
@@ -2336,7 +2353,7 @@ KB.pan = {
    items:[
     ["url","URL filtering","pan:threat subtype url",2,"H","Kategorie stron, blokady, phishing.","T1566.002"],
     ["dns","DNS Security","pan:threat subtype spyware (dns)",2,"M","Domeny C2, DGA, tunelowanie DNS. Może zastąpić logi zapytań z Windows DNS.","T1071.004"],
-    ["wf","WildFire","pan:wildfire",1,"L","Werdykty dla plików przechodzących przez firewall.","T1204"]
+    ["wf","WildFire","pan:threat (log_subtype=wildfire)",1,"L","Werdykty dla plików przechodzących przez firewall.","T1204"]
    ], dont:[], tips:["Włącz profil DNS Security z sinkholingiem. Wtedy zapytania do C2 widzisz jako ruch do adresu sinkhole z konkretnej stacji."],
    cfg:{dev:"",splunk:"",wazuh:"",elastic:""}, test:[], det:[]},
   gp:{name:"GlobalProtect (VPN)", desc:"Zdalny dostęp użytkowników.",
@@ -2417,49 +2434,348 @@ end
 };
 
 /* ---------- VMware ---------- */
+const VMW_WAZUH_RULES = R`<!-- Na managerze: /var/ossec/etc/rules/local_rules.xml
+     ESXi i vCenter nie mają w Wazuh dobrego zestawu reguł: poniższe dopasowują treść komunikatu.
+     Sprawdź każdą regułę w /var/ossec/bin/wazuh-logtest na własnych próbkach. -->
+<group name="vmware,esxi,">
+  <rule id="100300" level="10">
+    <match type="pcre2">esx\.audit\.(ssh|shell)\.enabled|SSH access has been enabled|ESXi Shell .*has been enabled</match>
+    <description>ESXi: włączono SSH lub ESXi Shell</description>
+    <mitre><id>T1021.004</id></mitre>
+  </rule>
+  <rule id="100301" level="12">
+    <match type="pcre2">esxcli vm process kill|vim-cmd vmsvc/power\.off|vim-cmd vmsvc/snapshot\.removeall|vim-cmd vmsvc/unregister</match>
+    <description>ESXi: wyłączanie, zabijanie lub wyrejestrowanie VM z shella (ransomware)</description>
+    <mitre><id>T1529</id><id>T1486</id></mitre>
+  </rule>
+  <rule id="100302" level="12">
+    <match type="pcre2">(?i)execInstalledOnly.*(false|\b0\b)|Execution of non-VIB file</match>
+    <description>ESXi: wyłączenie execInstalledOnly albo próba uruchomienia pliku spoza VIB</description>
+    <mitre><id>T1562.001</id></mitre>
+  </rule>
+  <rule id="100303" level="10">
+    <match type="pcre2">esx\.audit\.lockdownmode\.disabled|Lockdown mode disabled</match>
+    <description>ESXi: wyłączono lockdown mode</description>
+    <mitre><id>T1562</id></mitre>
+  </rule>
+  <rule id="100304" level="10">
+    <match type="pcre2">esx\.audit\.esximage\.(hostacceptance\.changed|install)|--no-sig-check|acceptance set --level=CommunitySupported</match>
+    <description>ESXi: instalacja VIB albo obniżenie poziomu akceptacji</description>
+    <mitre><id>T1505</id></mitre>
+  </rule>
+  <rule id="100305" level="10">
+    <match type="pcre2">/etc/rc\.local\.d/local\.sh|/var/spool/cron/crontabs|rhttpproxy/endpoints\.conf</match>
+    <description>ESXi: modyfikacja plików trwałości (local.sh, cron, endpoints.conf)</description>
+    <mitre><id>T1037</id><id>T1053.003</id></mitre>
+  </rule>
+  <rule id="100306" level="10">
+    <match type="pcre2">syslog config set --loghost=''|system syslog config set --loghost=""|esxcli network firewall set --enabled false|esx\.audit\.net\.firewall\.disabled</match>
+    <description>ESXi: wyłączenie wysyłki syslog lub zapory</description>
+    <mitre><id>T1562.006</id></mitre>
+  </rule>
+  <rule id="100307" level="5">
+    <match type="pcre2">Rejected password for user|Authentication failure for user|failed to authenticate</match>
+    <description>ESXi: nieudane logowanie</description>
+    <group>authentication_failed,</group>
+  </rule>
+  <rule id="100308" level="10" frequency="8" timeframe="120">
+    <if_matched_sid>100307</if_matched_sid>
+    <description>ESXi: seria nieudanych logowań</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+  <rule id="100309" level="8">
+    <match type="pcre2">esx\.audit\.account\.locked|has been locked for \d+ seconds</match>
+    <description>ESXi: zablokowane konto lokalne</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+</group>
+
+<group name="vmware,vcenter,">
+  <rule id="100320" level="8">
+    <match type="pcre2">vim\.event\.(PermissionAddedEvent|PermissionUpdatedEvent|PermissionRemovedEvent|RoleAddedEvent|RoleUpdatedEvent|RoleRemovedEvent)</match>
+    <description>vCenter: zmiana uprawnień lub ról</description>
+    <mitre><id>T1098</id></mitre>
+  </rule>
+  <rule id="100321" level="5">
+    <match type="pcre2">vim\.event\.BadUsernameSessionEvent|Cannot login .*@</match>
+    <description>vCenter: nieudane logowanie</description>
+    <group>authentication_failed,</group>
+  </rule>
+  <rule id="100322" level="10" frequency="8" timeframe="120">
+    <if_matched_sid>100321</if_matched_sid>
+    <description>vCenter: seria nieudanych logowań</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+  <rule id="100323" level="8">
+    <match type="pcre2">vim\.event\.(VmClonedEvent|VmBeingClonedEvent|VmRemovedEvent)|ExportVm|com\.vmware\.vc\.guestOperations\.GuestOperation</match>
+    <description>vCenter: klonowanie, eksport, usunięcie VM albo operacja w gościu (sprawdź, czy dotyczy maszyn T0)</description>
+    <mitre><id>T1578</id><id>T1059</id></mitre>
+  </rule>
+  <rule id="100324" level="10">
+    <match type="pcre2">com\.vmware\.sso\.|IdentitySource|vim\.event\.HostRemovedEvent|vim\.event\.AlarmRemovedEvent</match>
+    <description>vCenter: zmiana SSO, źródła tożsamości, usunięcie hosta lub alarmu</description>
+    <mitre><id>T1556</id><id>T1562</id></mitre>
+  </rule>
+</group>
+`;
 KB.vmw = {
  name:"VMware vSphere (ESXi, vCenter)", grp:"infra", short:"VMware",
- desc:"Hypervisory i vCenter. Częsty cel ransomware: jeden host ESXi = dziesiątki zaszyfrowanych VM.",
+ desc:"Hypervisory ESXi, vCenter Server (VCSA) i NSX. Częsty cel ransomware: jeden host ESXi to dziesiątki zaszyfrowanych VM, a vCenter to dostęp do dysków kontrolerów domeny.",
  files:NET_FILES, devLabel:"ESXi / vCenter",
- base:{name:"Podstawa: środowisko vSphere", items:[], dont:[["Logi vpxa i hostd na poziomie verbose","Setki MB dziennie z każdego hosta."]],
-  tips:["Hosty ESXi hostujące DC są Tier 0. Dostęp do vCenter i ESXi tylko z PAW właściwego tieru.","vCenter nie w domenie produkcyjnej albo z osobnym źródłem tożsamości dla administratorów."],
-  cfg:{dev:"",splunk:netSplunk("esxi","vmw-syslog","# Splunk Add-on for VMware ESXi Logs\n"),wazuh:netWazuh("Brak wbudowanych reguł ESXi o dobrym pokryciu: dopisz reguły dla shell.log i hostd."),
+ base:{name:"Podstawa: środowisko vSphere",
+  items:[
+   ["silence","Ciągłość logów z każdego hosta i vCenter","porównanie inwentarza z ostatnim zdarzeniem per host; esxcli system syslog mark",1,"L","Atakujący często zaczyna od wyłączenia syslog. Host, który zamilkł, trzeba sprawdzić jak incydent.","T1562.006"],
+   ["time","Synchronizacja czasu","ntpd/chronyd na ESXi i VCSA; ostrzeżenia o rozjeździe",2,"L","Bez NTP nie skorelujesz logowania do vCenter z operacją na hoście i ruchem z firewalla.",""],
+   ["esxadm","Grupa „ESX Admins” w AD","DC: Security 4727, 4731, 4754 (utworzenie), 4728, 4732, 4756 (członkostwo), 4781 (zmiana nazwy)",1,"L","CVE-2024-37085: host ESXi w domenie nadaje pełne uprawnienia każdemu członkowi grupy o tej nazwie. Wykorzystywane przez grupy ransomware.","T1098"]
+  ],
+  dont:[
+   ["Logi vpxa i hostd na poziomie verbose/trivia","Setki MB dziennie z każdego hosta. Poziom info wystarcza do bezpieczeństwa."],
+   ["vmkernel: komunikaty ścieżek storage (NMP, ScsiDeviceIO, H:0x0 D:0x2)","Główne źródło wolumenu z ESXi i domena zespołu storage. Odfiltruj na relayu albo w SC4S."],
+   ["Pełny vpxd.log i vpxd-profiler z VCSA","Dziesiątki GB dziennie z dużego vCenter. Do SIEM wysyłaj strumień zdarzeń vCenter (vim.event.*) i logi SSO."],
+   ["Metryki wydajności (CPU, RAM, datastore) jako logi","Miejsce na nie jest w indeksie metryk albo w VCF Operations (vROps), nie w licencji SIEM."],
+   ["Zdarzenia rutynowe vCenter: TaskEvent odświeżania, AlarmStatusChangedEvent zielony↔żółty, sesje kont usług co minutę","Szum. Kont serwisowych (backup, monitoring) nie wyłączaj z logowania, tylko z alertów, i pilnuj ich adresów źródłowych."]
+  ],
+  tips:[
+   "Hosty ESXi z kontrolerami domeny, PKI i PAM są Tier 0, podobnie jak vCenter, który nimi zarządza. Administracja wyłącznie z PAW właściwego tieru.",
+   "vCenter przechowuje zdarzenia i zadania w bazie tylko przez 30 dni (domyślnie). SIEM jest jedynym długim archiwum: ustaw retencję zgodnie z polityką (np. 12 miesięcy).",
+   "Logowanie administratorów do vCenter przez osobne źródło tożsamości albo konta admin z grupy spoza Domain Admins. Przejęcie domeny nie może oznaczać automatycznie przejęcia wirtualizacji.",
+   "Relay syslog blisko hostów i TCP (albo TLS na 1514). vmsyslogd na ESXi ma mały bufor: przy awarii odbiorcy komunikaty przepadają, dlatego logi lokalne trzymaj na trwałym datastore (<code>--logdir</code>), a nie na ramdysku.",
+   "Najcenniejsze pliki ESXi dla SIEM: <code>shell.log</code> (polecenia), <code>auth.log</code> (SSH/DCUI), <code>hostd.log</code> (Host Client, API, operacje na VM), <code>vobd.log</code> (zdarzenia <code>esx.audit.*</code>), <code>esxupdate.log</code> (VIB). vmkernel i vpxa mają mniejszą wartość na GB."
+  ],
+  cfg:{dev:"",
+   splunk:netSplunk("esxi","vmw-syslog","# Po stronie wyszukiwania: Splunk Add-on for VMware ESXi Logs (Splunk_TA_esxilogs) rozdziela vmw-syslog na pliki ESXi.\n# Zamiast relaya: SC4S ma gotowy parser vmware_vsphere.\n"),
+   wazuh:netWazuh("ESXi i VCSA wysyłają zwykle po TCP: przy odbiorze bezpośrednio na managerze ustaw <protocol>tcp,udp</protocol>. Reguły ESXi i vCenter są w local_rules.xml (osobny plik w paczce).") + VMW_WAZUH_RULES,
    elastic:netElastic(R`filebeat.inputs:
   - type: filestream
     id: esxi
     paths: ["/var/log/remote/esxi/*/*.log"]
-    tags: ["esxi"]
-# Elastic Agent: integracja „VMware vSphere” (logi + metryki)`)}, test:[], det:[]},
+    tags: ["esxi","vmware"]
+# Elastic Agent: integracja „VMware vSphere” (logi syslog + metryki przez API vCenter)`)},
+  test:[["Znacznik w logach hosta",R`esxcli system syslog mark -s "SIEMTEST"`,"Szukaj SIEMTEST w indeksie network z hosta ESXi. Brak = sprawdź loghost, firewall ESXi (ruleset syslog) i relay."]],
+  det:[
+   {n:"Utworzenie lub użycie grupy „ESX Admins” (CVE-2024-37085)",att:"T1098",
+    spl:R`index=wineventlog EventCode IN (4727,4731,4754,4728,4732,4756,4781) ("ESX Admins" OR "ESX%20Admins")
+| table _time host EventCode SubjectUserName TargetUserName MemberName`,
+    kql:R`event.code:("4727" or "4731" or "4754" or "4728" or "4732" or "4756" or "4781") and winlog.event_data.TargetUserName:"ESX Admins"`,
+    wz:R`data.win.system.eventID:(4727 OR 4728 OR 4731 OR 4732 OR 4754 OR 4756) AND data.win.eventdata.targetUserName:"ESX Admins"`},
+   {n:"Host ESXi lub vCenter przestał wysyłać logi",att:"T1562.006",
+    spl:R`| tstats latest(_time) as ostatni where index=network (sourcetype=vmw-syslog OR sourcetype=vmware:vclog*) by host
+| eval minut=round((now()-ostatni)/60) | where minut>60 | sort - minut`,
+    kql:R`ES|QL: FROM logs-* | WHERE tags == "esxi" | STATS ostatni = MAX(@timestamp) BY host.name | WHERE ostatni < NOW() - 1 hour`,
+    wz:R`Wazuh: agentless nie ma heartbeatu syslog; porównuj listę hostów z wynikiem zapytania data.srcip w ostatniej godzinie`}
+  ]},
  roles:{
-  esxi:{name:"Host ESXi", desc:"Hypervisor.",
+  esxi:{name:"Host ESXi", desc:"Hypervisor ESXi 7/8 (także hosty zarządzane przez vCenter).",
    items:[
-    ["ssh","SSH i ESXi Shell","hostd, auth.log, shell.log; vobd: esx.audit.ssh.enabled",1,"L","Włączenie SSH i polecenia w shellu (esxcli, vim-cmd). Typowy etap ransomware.","T1021.004"],
-    ["vmops","Operacje na VM","hostd: power off, unregister, snapshot delete",2,"L","Masowe wyłączanie VM przed szyfrowaniem.","T1529"],
-    ["audit","Rekordy audytu ESXi 8","esxcli system auditrecords",1,"L","Zmiany konfiguracji, logowania, lockdown mode.","T1562"],
-    ["vib","Instalacja VIB","esxupdate.log, vobd",1,"L","Złośliwe VIB-y jako persistence (VirtualPita).","T1543"],
-    ["fw","Zmiany firewalla i lockdown","vobd, hostd",1,"L","Otwieranie dostępu do hosta.","T1562.004"]
-   ], dont:[], tips:["Lockdown mode (normal) i wyłączone SSH na stałe. Włączenie SSH to zdarzenie P1.","execInstalledOnly = true blokuje uruchamianie binarek spoza VIB (ESXi 7/8)."],
-   cfg:{dev:R`# ESXi (SSH lub esxcli przez PowerCLI)
-esxcli system syslog config set --loghost='tcp://10.10.1.5:514'
-esxcli system syslog reload
+    ["login","Logowania do hosta: Host Client, API, SSH, DCUI","hostd: Accepted/Rejected password for user; auth.log: sshd; vobd: esx.audit.dcui.login",1,"L","Logowania z pominięciem vCenter, konto root, brute force na Host Client.","T1078, T1110"],
+    ["lock","Blokada konta lokalnego","vobd: esx.audit.account.locked („locked for 900 seconds”)",1,"L","Zgadywanie hasła root. Po blokadzie atakujący często przełącza się na inny host.","T1110"],
+    ["ssh","SSH i ESXi Shell","vobd: esx.audit.ssh.enabled, esx.audit.shell.enabled; hostd: SSH access has been enabled",1,"L","Włączenie SSH lub ESXi Shell to typowy pierwszy krok ransomware na ESXi. Na hoście w lockdown nie powinno się zdarzać.","T1021.004"],
+    ["shellcmd","Polecenia w ESXi Shell","shell.log: esxcli, vim-cmd, wget/curl, chmod +x w /tmp",1,"L","Rozpoznanie (vim-cmd vmsvc/getallvms), zabijanie VM, uruchamianie szyfratora. Najważniejszy plik ESXi w dochodzeniu.","T1059.004, T1486"],
+    ["vmops","Operacje na VM na hoście","hostd: power off, unregister, snapshot remove; shell.log: esxcli vm process kill",1,"L","Masowe wyłączanie VM i usuwanie snapshotów tuż przed szyfrowaniem.","T1529, T1490"],
+    ["audit","Rekordy audytu ESXi","esxcli system auditrecords (zmiany ustawień, logowania, uprawnienia)",1,"L","Ustrukturyzowany zapis zmian konfiguracji hosta niezależny od hostd.","T1562"],
+    ["lockdown","Lockdown mode","vobd: esx.audit.lockdownmode.enabled / disabled; zmiana listy Exception Users",1,"L","Wyłączenie lockdown otwiera logowanie bezpośrednio do hosta, z pominięciem vCenter.","T1562"],
+    ["exec","execInstalledOnly i Secure Boot","vmkernel: Execution of non-VIB file … denied; zmiana VMkernel.Boot.execInstalledOnly",1,"L","Blokada uruchamiania plików spoza VIB zatrzymuje większość szyfratorów ESXi. Jej wyłączenie lub trafienia to alarm.","T1562.001"],
+    ["vib","Instalacja VIB i poziom akceptacji","esxupdate.log; vobd: esx.audit.esximage.*; esxcli software acceptance set",1,"L","Złośliwe VIB-y (VirtualPita, VirtualPie) jako backdoor przetrwający restart.","T1505, T1543"],
+    ["persist","Pliki trwałości na hoście","shell.log / audit: /etc/rc.local.d/local.sh, crontab root, rhttpproxy/endpoints.conf",1,"L","Backdoory ESXi zapisują się w local.sh albo dodają endpoint webshella do rhttpproxy.","T1037, T1053.003, T1505.003"],
+    ["fw","Zapora hosta i usługi","vobd: esx.audit.net.firewall.*; hostd: start usług (SSH, SLP, SNMP)",1,"L","Otwieranie dostępu do hosta, włączenie SLP (ESXiArgs, CVE-2021-21974).","T1562.004"],
+    ["cfg","Zmiany ustawień zaawansowanych i syslog","hostd / audit: Syslog.global.logHost, UserVars.*, Security.*",1,"L","Wyłączenie wysyłki logów, poluzowanie blokady kont i timeoutów shella.","T1562.006"],
+    ["users","Konta lokalne i uprawnienia na hoście","audit / hostd: esxcli system account add, system permission set",1,"L","Konto lokalne z rolą Admin jako furtka omijająca vCenter i AD.","T1136.001, T1098"],
+    ["vmkwarn","Ostrzeżenia vmkernel i awarie","vmkwarning.log, PSOD, utrata datastore",3,"M","Kontekst dla incydentów dostępności, sabotażu i nietypowych restartów.","T1529"],
+    ["dfw","Logi pakietów NSX DFW na hoście","/var/log/dfwpktlogs.log (tylko reguły z włączonym logowaniem)",3,"H","Ruch między VM tam, gdzie nie ma innego źródła. Tylko wybrane reguły.","T1046"]
+   ],
+   dont:[["Logowania kont usług (backup, monitoring, vCenter vpxuser) co kilka minut","Zostaw w logach, ale wyłącz z alertów i reguł brute force. Alarmuj, gdy konto usługi loguje się z nowego adresu."],
+    ["Pełne dfwpktlogs.log ze wszystkich reguł","Log per połączenie między VM. Włączaj logowanie tylko na regułach drop i na ruchu do stref T0."]],
+   tips:[
+    "Lockdown mode <b>normal</b>, SSH i ESXi Shell wyłączone na stałe, Exception Users tylko dla kont usług, które naprawdę tego wymagają. Każde włączenie SSH ma mieć zgłoszenie serwisowe.",
+    "<code>execInstalledOnly = TRUE</code> (ESXi 7/8) blokuje uruchamianie binarek spoza zainstalowanych VIB, czyli większość szyfratorów wgranych przez SCP. Na ESXi 8 z TPM możesz to wymusić trwale: <code>esxcli system settings encryption set --require-exec-installed-only=T</code>.",
+    "Host w domenie AD: ustaw <code>Config.HostAgent.plugins.hostsvc.esxAdminsGroupAutoAdd = false</code> i własną nazwę grupy w <code>esxAdminsGroup</code> (CVE-2024-37085). Monitoruj w AD grupę „ESX Admins”.",
+    "SLP wyłączony na każdym hoście (ESXiArgs). Host Client i API dostępne tylko z sieci zarządzania, nie z sieci użytkowników.",
+    "W logach hosta nie ma treści poleceń wykonanych przez API (PowerCLI). Dlatego rekordy audytu ESXi i zdarzenia vCenter są potrzebne razem z shell.log."
+   ],
+   cfg:{dev:R`# ESXi 7.0 U3 / 8.x — przez SSH (na czas konfiguracji), esxcli w PowerCLI (Get-EsxCli -V2) albo Host Profiles
+# 1. Trwałe logi lokalne na datastore (nie na ramdysku) i wysyłka do relaya
+esxcli system syslog config set --logdir=/vmfs/volumes/DATASTORE01/logs --logdir-unique=true
+esxcli system syslog config set --loghost='tcp://10.10.1.5:514,tcp://10.10.1.6:514'
+#   TLS: --loghost='ssl://relay01.corp.example:1514' i certyfikat CA relaya w /etc/vmware/ssl/castore.pem
 esxcli network firewall ruleset set -r syslog -e true
 esxcli network firewall refresh
-# ESXi 8: rekordy audytu
+esxcli system syslog reload
+
+# 2. Rekordy audytu (ESXi 8; na starszych wersjach polecenie może nie istnieć)
 esxcli system auditrecords local enable
 esxcli system auditrecords remote enable
-# hardening
+esxcli system syslog reload
+
+# 3. Poziom logowania agentów: info (nie verbose)
+esxcli system settings advanced set -o /Config/HostAgent/log/level -s info
+esxcli system settings advanced set -o /Vpx/Vpxa/config/log/level -s info
+
+# 4. Blokada kont i timeouty shella
+esxcli system settings advanced set -o /Security/AccountLockFailures -i 5
+esxcli system settings advanced set -o /Security/AccountUnlockTime -i 900
+esxcli system settings advanced set -o /UserVars/ESXiShellInteractiveTimeOut -i 900
+esxcli system settings advanced set -o /UserVars/ESXiShellTimeOut -i 900
+
+# 5. Hardening przeciw ransomware
 esxcli system settings kernel set -s execInstalledOnly -v TRUE
+esxcli software acceptance set --level=PartnerSupported
+/etc/init.d/slpd stop
+esxcli network firewall ruleset set -r CIMSLP -e 0
+chkconfig slpd off
+#   host w domenie (CVE-2024-37085), PowerCLI:
+#   Get-VMHost | Get-AdvancedSetting -Name Config.HostAgent.plugins.hostsvc.esxAdminsGroupAutoAdd | Set-AdvancedSetting -Value $false -Confirm:$false
+#   Get-VMHost | Get-AdvancedSetting -Name Config.HostAgent.plugins.hostsvc.esxAdminsGroup | Set-AdvancedSetting -Value "GG-vSphere-ESXi-Admins" -Confirm:$false
+
+# 6. Czas
+esxcli system ntp set -s 10.10.0.10 -e true
+
+# 7. Na koniec: SSH i ESXi Shell wyłączone, lockdown mode z vCenter (Configure → Security Profile → Lockdown Mode: Normal)
+vim-cmd hostsvc/disable_esx_shell
+vim-cmd hostsvc/disable_ssh
+
+# Weryfikacja
+esxcli system syslog config get
+esxcli system auditrecords get
+esxcli system syslog mark -s "SIEMTEST"
 `, splunk:"", wazuh:"", elastic:""},
-   test:[["Nieudane logowanie","Zaloguj się do Host Client złym hasłem","Szukaj wpisu hostd o nieudanym logowaniu."]],
-   det:[{n:"Włączenie SSH lub ESXi Shell",att:"T1021.004",spl:R`index=network sourcetype="vmw-syslog" ("esx.audit.ssh.enabled" OR "esx.audit.shell.enabled" OR "SSH access has been enabled") | table _time host _raw`,
-     kql:R`tags:"esxi" and message:(*esx.audit.ssh.enabled* or *esx.audit.shell.enabled*)`, wz:R`full_log:*esx.audit.ssh.enabled*`}]},
-  vc:{name:"vCenter", desc:"Zarządzanie całym środowiskiem.",
+   test:[
+    ["Nieudane logowanie do Host Client","Zaloguj się do https://<esxi>/ui kontem root ze złym hasłem","Szukaj „Rejected password for user root” w hostd z adresem źródłowym."],
+    ["Rekord audytu",R`esxcli system settings advanced set -o /UserVars/ESXiShellInteractiveTimeOut -i 899
+esxcli system settings advanced set -o /UserVars/ESXiShellInteractiveTimeOut -i 900`,"Szukaj zmiany ESXiShellInteractiveTimeOut w rekordach audytu i hostd."]],
+   det:[
+    {n:"Włączenie SSH lub ESXi Shell",att:"T1021.004",spl:R`index=network sourcetype="vmw-syslog" ("esx.audit.ssh.enabled" OR "esx.audit.shell.enabled" OR "SSH access has been enabled") | table _time host _raw`,
+     kql:R`tags:"esxi" and message:(*esx.audit.ssh.enabled* or *esx.audit.shell.enabled*)`, wz:R`rule.id:100300`},
+    {n:"Polecenia typowe dla ransomware w ESXi Shell",att:"T1486",
+     spl:R`index=network sourcetype="vmw-syslog" ("esxcli vm process kill" OR "vim-cmd vmsvc/power.off" OR "vim-cmd vmsvc/getallvms" OR "snapshot.removeall" OR "execInstalledOnly" OR "local.sh" OR "encrypt" OR "chmod +x /tmp")
+| rex "(?<cmd>(esxcli|vim-cmd|chmod|wget|curl)[^\]]+)"
+| stats count values(cmd) as polecenia earliest(_time) as od by host | where count>0`,
+     kql:R`tags:"esxi" and message:(*"esxcli vm process kill"* or *"vim-cmd vmsvc/power.off"* or *snapshot.removeall* or *execInstalledOnly* or *local.sh*)`,
+     wz:R`rule.id:(100301 OR 100302 OR 100305)`},
+    {n:"Seria nieudanych logowań do hosta",att:"T1110",
+     spl:R`index=network sourcetype="vmw-syslog" "Rejected password for user"
+| rex "for user (?<user>\S+) from (?<src>[\d\.]+)" | bin _time span=10m
+| stats count by _time host user src | where count>=5`,
+     kql:R`tags:"esxi" and message:"Rejected password for user"`, wz:R`rule.id:100308`},
+    {n:"Instalacja VIB albo obniżenie poziomu akceptacji",att:"T1505",
+     spl:R`index=network sourcetype="vmw-syslog" ("esx.audit.esximage" OR "--no-sig-check" OR "CommunitySupported" OR "Installing VIB") | table _time host _raw`,
+     kql:R`tags:"esxi" and message:(*esx.audit.esximage* or *no-sig-check* or *CommunitySupported*)`, wz:R`rule.id:100304`}
+   ]},
+  vc:{name:"vCenter Server (VCSA)", desc:"Zarządzanie całym środowiskiem: zdarzenia vCenter, SSO i logi appliance.",
    items:[
-    ["vclogin","Logowania i uprawnienia","UserLoginSessionEvent, BadUsernameSessionEvent, PermissionAddedEvent",1,"L","Logowania adminów, nowe role i uprawnienia.","T1078"],
-    ["vcvm","Operacje na VM","VmRemovedEvent, snapshot delete, clone VM DC",1,"L","Kradzież dysku DC przez klonowanie, niszczenie środowiska.","T1578"],
-    ["sso","Źródła tożsamości SSO","Zmiany identity source, konta vsphere.local",1,"L","Dodanie źródła tożsamości = nowa ścieżka logowania.","T1556"]
-   ], dont:[], tips:["Klonowanie lub eksport VM z DC to kradzież NTDS.dit. Alertuj na każdą operację clone/export na maszynach T0."],
-   cfg:{dev:"vCenter VAMI (https://<vcenter>:5480) → Syslog → Add: 10.10.1.5, TCP, 514\n", splunk:"", wazuh:"", elastic:""}, test:[], det:[]}
+    ["vclogin","Logowania do vCenter","vim.event.UserLoginSessionEvent, UserLogoutSessionEvent; SSO audit: LoginSuccess",1,"L","Kto i skąd administruje wirtualizacją. Logowanie konta domenowego z nowego adresu to punkt wyjścia wielu dochodzeń.","T1078"],
+    ["vcfail","Nieudane logowania i blokady SSO","vim.event.BadUsernameSessionEvent; SSO audit: LoginFailure, konto zablokowane",1,"L","Password spray na vCenter, zgadywanie hasła administrator@vsphere.local.","T1110"],
+    ["perm","Uprawnienia i role","PermissionAddedEvent, PermissionUpdatedEvent, PermissionRemovedEvent, RoleAddedEvent, RoleUpdatedEvent",1,"L","Nadanie roli Administrator na root vCenter albo nowa rola z uprawnieniami do konsoli i dysków.","T1098"],
+    ["sso","SSO: źródła tożsamości, konta i grupy vsphere.local","SSO audit (audit_events.log): identity source, użytkownicy, grupa Administrators",1,"L","Nowe źródło tożsamości albo konto w vsphere.local to trwała ścieżka logowania poza AD.","T1556, T1136"],
+    ["vcvm","Klonowanie, usuwanie i rejestracja VM","VmClonedEvent, VmBeingClonedEvent, VmRemovedEvent, VmRegisteredEvent",1,"L","Klon DC to kopia NTDS.dit poza kontrolą AD. Masowe usuwanie VM to sabotaż.","T1578, T1003.003"],
+    ["export","Eksport i pobieranie dysków","zadanie ExportVm (OVF), pobieranie z Datastore Browser (rhttpproxy/vpxd), Content Library",1,"L","Wyniesienie VMDK kontrolera domeny, PKI lub bazy danych.","T1005, T1003.003"],
+    ["snap","Snapshot maszyn Tier 0","zadanie CreateSnapshot_Task z pamięcią; VmStateRevertedToSnapshot",1,"L","Snapshot z pamięcią DC zawiera LSASS (.vmem/.vmsn): hasła i klucze do wyciągnięcia offline.","T1003"],
+    ["guestops","Operacje w systemie gościa (VMware Tools)","com.vmware.vc.guestOperations.GuestOperation, GuestOperationAuthFailure",1,"L","Uruchamianie procesów i kopiowanie plików do VM przez vCenter, z pominięciem sieci i EDR-owego widoku logowania.","T1059, T1021"],
+    ["console","Otwarcie konsoli VM","VmAcquiredMksTicketEvent, VmAcquiredTicketEvent",2,"L","Dostęp do konsoli DC albo serwera PAM poza standardową ścieżką (RDP przez PAM).","T1021"],
+    ["hostcfg","Zmiany hostów z poziomu vCenter","HostRemovedEvent, HostConnectedEvent, zmiana lockdown mode, start usługi SSH na hoście",1,"L","Odłączenie hosta od vCenter i włączenie SSH poprzedza atak bezpośrednio na ESXi.","T1562"],
+    ["alarm","Alarmy i zadania zaplanowane","AlarmRemovedEvent, AlarmReconfiguredEvent, ScheduledTaskCreatedEvent",2,"L","Wyciszanie alarmów przed atakiem, zaplanowane zadania wyłączające VM.","T1562, T1053"],
+    ["vcsa","Dostęp do samego appliance","SSH/Bash na VCSA, logowania do VAMI (:5480), zmiany syslog forwarding, audit.log (auditd Photon)",1,"L","Shell na VCSA daje dostęp do bazy vCenter i certyfikatów STS (golden SAML dla vSphere).","T1021.004, T1606.002"],
+    ["ext","Rozszerzenia i pluginy vCenter","ExtensionRegistered, zmiany solution users",2,"L","Plugin albo solution user jako trwały dostęp z pełnymi uprawnieniami.","T1505"],
+    ["inv","Inwentarz i zmiany konfiguracji VM","VmReconfiguredEvent, inwentarz przez API (Splunk Add-on for VMware)",3,"M","Przypięcie dysku DC do innej VM, dodanie karty sieciowej, kontekst dla dochodzeń.","T1578"]
+   ],
+   dont:[["TaskEvent i zdarzenia odświeżania inwentarza wywoływane przez monitoring","Tysiące dziennie z jednego konta. Filtruj po koncie i typie zdarzenia."],
+    ["vpxd-profiler, vpxd-svcs debug, logi wydajności postgres","Diagnostyka VMware, nie bezpieczeństwo."]],
+   tips:[
+    "Włącz strumień zdarzeń vCenter do syslog: Advanced Settings <code>vpxd.event.syslog.enabled = true</code> (sprawdź w swojej wersji, w nowszych jest domyślnie włączony). Bez tego syslog z VCSA zawiera logi usług, ale nie zdarzenia typu PermissionAddedEvent.",
+    "Retencja zdarzeń i zadań w bazie vCenter: Configure → General → Database (domyślnie 30 dni). Nie wydłużaj jej zamiast SIEM: baza rośnie i spowalnia vCenter.",
+    "administrator@vsphere.local tylko jako konto awaryjne w sejfie PAM. Alertuj na każde jego użycie.",
+    "Klonowanie, eksport i snapshot z pamięcią maszyn T0 (DC, PKI, PAM, ADFS) alertuj zawsze. Najprościej przez listę nazw T0 jako lookup w SIEM.",
+    "SSH i Bash na VCSA wyłączone (VAMI → Access). Blokada kont SSO: 5 prób, odblokowanie po 15 minutach."
+   ],
+   cfg:{dev:R`# vCenter Server Appliance 7/8
+# 1. Przekazywanie logów appliance (maks. 3 odbiorców):
+#    VAMI https://<vcenter>:5480 → Syslog → Configure: 10.10.1.5, TCP, 514 (albo TLS)
+#    albo API: PUT https://<vcenter>/api/appliance/logging/forwarding
+#              test: POST https://<vcenter>/api/appliance/logging/forwarding?action=test
+#
+# 2. Zdarzenia vCenter (vim.event.*) w syslog:
+#    vSphere Client → vCenter → Configure → Settings → Advanced Settings:
+#    vpxd.event.syslog.enabled = true
+#
+# 3. Retencja zdarzeń i zadań w bazie: Configure → General → Database → Event/Task retention
+#
+# 4. SSO: Administration → Single Sign On → Configuration → Local Accounts
+#    Lockout Policy: Max failed attempts 5, Unlock time 900 s
+#    Identity Provider: AD przez LDAPS, grupa adminów vSphere spoza Domain Admins
+#
+# 5. Appliance: VAMI → Access: SSH Login = Disabled, BASH Shell = Disabled
+#    appliancesh: shell.set --enabled false
+#
+# Weryfikacja (PowerCLI):
+Connect-VIServer vcenter01.corp.example
+Get-AdvancedSetting -Entity $global:DefaultVIServer -Name vpxd.event.syslog.enabled
+Get-VIEvent -MaxSamples 20 | Select-Object CreatedTime, UserName, FullFormattedMessage
+`, splunk:R`# --- rola: vCenter ---
+# Na relayu dopisz adresy VCSA do katalogu vcenter (rola Linux „Relay / kolektor syslog”).
+[monitor:///var/log/remote/vcenter/*/*.log]
+disabled = 0
+host_segment = 5
+index = network
+sourcetype = vmware:vclog
+# Po stronie wyszukiwania: Splunk Add-on for vCenter Logs (sourcetype'y vmware:vclog:*).
+# Inwentarz, zadania i zdarzenia przez API: Splunk Add-on for VMware (DCN) → vmware:events, vmware:tasks.
+`, wazuh:"<!-- rola: vCenter: syslog z VCSA przez <remote> z podstawy; reguły vCenter w local_rules.xml -->\n",
+    elastic:R`filebeat.inputs:
+  - type: filestream
+    id: vcenter
+    paths: ["/var/log/remote/vcenter/*/*.log"]
+    tags: ["vcenter","vmware"]
+`},
+   test:[
+    ["Nieudane logowanie","Zaloguj się do vSphere Client kontem testowym ze złym hasłem","Szukaj BadUsernameSessionEvent albo LoginFailure w SSO."],
+    ["Zmiana uprawnień","Dodaj i usuń uprawnienie Read-only dla konta testowego na pustym folderze","Szukaj PermissionAddedEvent i PermissionRemovedEvent z nazwą folderu."]],
+   det:[
+    {n:"Zmiana uprawnień lub ról w vCenter",att:"T1098",
+     spl:R`index=network sourcetype=vmware:vclog* ("PermissionAddedEvent" OR "PermissionUpdatedEvent" OR "RoleAddedEvent" OR "RoleUpdatedEvent")
+| rex "\[vim\.event\.(?<typ>\w+)\] \[\w+\] \[(?<user>[^\]]*)\]" | table _time host typ user _raw`,
+     kql:R`tags:"vcenter" and message:(*PermissionAddedEvent* or *PermissionUpdatedEvent* or *RoleAddedEvent* or *RoleUpdatedEvent*)`, wz:R`rule.id:100320`},
+    {n:"Klon, eksport albo snapshot maszyny Tier 0",att:"T1003.003",
+     spl:R`index=network sourcetype=vmware:vclog* ("VmClonedEvent" OR "VmBeingClonedEvent" OR "ExportVm" OR "CreateSnapshot" OR "VmRegisteredEvent")
+| search [| inputlookup t0_vms.csv | rename vm_name AS query | fields query]
+| table _time host user _raw`,
+     kql:R`tags:"vcenter" and message:(*VmClonedEvent* or *ExportVm* or *CreateSnapshot*) and message:(*dc01* or *dc02* or *pki01*)`, wz:R`rule.id:100323`},
+    {n:"Operacje w gościu przez VMware Tools",att:"T1059",
+     spl:R`index=network sourcetype=vmware:vclog* "guestOperations" | table _time host _raw`,
+     kql:R`tags:"vcenter" and message:*guestOperations*`, wz:R`rule.id:100323 AND full_log:*guestOperations*`},
+    {n:"Logowanie administrator@vsphere.local",att:"T1078.003",
+     spl:R`index=network sourcetype=vmware:vclog* "UserLoginSessionEvent" "administrator@vsphere.local" | table _time host _raw`,
+     kql:R`tags:"vcenter" and message:*UserLoginSessionEvent* and message:*administrator@vsphere.local*`, wz:R`full_log:*UserLoginSessionEvent* AND full_log:*administrator@vsphere.local*`}
+   ]},
+  nsx:{name:"NSX (Manager, Edge, DFW)", desc:"Sieć i mikrosegmentacja vSphere: NSX Manager, Edge i rozproszony firewall.",
+   items:[
+    ["nsxaudit","Audyt NSX Manager: logowania i zmiany","syslog NSX_AUDIT (structured data audit=\"true\"): login, zmiany reguł DFW, grup, polityk",1,"L","Otwarcie ruchu do stref T0 przez zmianę reguły mikrosegmentacji.","T1562.004"],
+    ["dfwlog","Trafienia reguł DFW (drop)","dfwpktlogs.log na hostach ESXi; reguły z włączonym logowaniem",2,"H","Skanowanie i lateral movement między VM w tej samej sieci L2.","T1046, T1021"],
+    ["idps","NSX IDS/IPS i Malware Prevention","zdarzenia IDPS z NSX Manager / Security Intelligence",1,"M","Wykrycia exploitów w ruchu wschód-zachód.","T1190"],
+    ["edge","Edge: VPN, NAT, firewall bramy","syslog NSX Edge",2,"M","Zmiany NAT i reguł na granicy wirtualnej sieci.","T1133"]
+   ],
+   dont:[["Logowanie wszystkich reguł allow w DFW","Log per połączenie między każdą parą VM. Tylko drop i ruch do stref T0."]],
+   tips:["Konfiguruj serwer syslog na każdym węźle NSX Manager (w klastrze trzy) i na Edge. Transport nodes (ESXi) wysyłają dfwpktlogs przez syslog hosta."],
+   cfg:{dev:R`# NSX 4.x / NSX-T 3.x — CLI każdego węzła NSX Manager i Edge (admin)
+set logging-server 10.10.1.5:514 proto tcp level info
+get logging-servers
+# DFW: w regułach drop i do stref T0 włącz „Logging” (Security → Distributed Firewall → reguła → Settings)
+`, splunk:R`# --- rola: NSX ---
+[monitor:///var/log/remote/nsx/*/*.log]
+disabled = 0
+host_segment = 5
+index = network
+sourcetype = vmware:nsxlog
+# Splunk Add-on for VMware NSX-T (jeśli używasz) albo własne ekstrakcje; SC4S ma parser NSX.
+`, wazuh:"<!-- rola: NSX: syslog przez <remote> z podstawy -->\n",
+    elastic:R`filebeat.inputs:
+  - type: filestream
+    id: nsx
+    paths: ["/var/log/remote/nsx/*/*.log"]
+    tags: ["nsx","vmware"]
+`},
+   test:[["Zmiana reguły","Dodaj i usuń testową regułę DFW w pustej sekcji","Szukaj wpisu NSX_AUDIT z nazwą reguły i kontem."]],
+   det:[{n:"Zmiana reguł DFW poza oknem serwisowym",att:"T1562.004",
+     spl:R`index=network sourcetype=vmware:nsxlog "audit=\"true\"" ("Firewall" OR "SecurityPolicy") | eval godz=tonumber(strftime(_time,"%H")) | where godz<7 OR godz>18 | table _time host _raw`,
+     kql:R`tags:"nsx" and message:*audit* and message:(*Firewall* or *SecurityPolicy*)`, wz:R`full_log:*audit* AND (full_log:*Firewall* OR full_log:*SecurityPolicy*)`}]}
  }
 };
 
@@ -2562,11 +2878,11 @@ KB.cloud = {
     ["sp","Logowania service principal","ServicePrincipalSignInLogs",2,"M","Nadużycie aplikacji i sekretów.","T1078.004"],
     ["risk","Ryzykowni użytkownicy i logowania","RiskyUsers, UserRiskEvents (Entra ID P2)",1,"L","Wycieki poświadczeń, anomalie.","T1078.004"]
    ], dont:[], tips:["Konta break-glass: wyłączone z CA, monitorowane na każde logowanie.","Zgody aplikacji wydawane przez użytkowników to częsta droga przejęcia skrzynki."],
-   cfg:{dev:"Entra admin center → Monitoring & health → Diagnostic settings → Add:\n  SignInLogs, NonInteractiveUserSignInLogs, ServicePrincipalSignInLogs, AuditLogs, RiskyUsers, UserRiskEvents\n  → Stream to an event hub (Splunk/Elastic) albo Log Analytics\nWazuh: moduł azure-logs (Graph API) z aplikacją o uprawnieniach AuditLog.Read.All\n",
+   cfg:{dev:"Entra admin center → Monitoring & health → Diagnostic settings → Add:\n  SignInLogs, NonInteractiveUserSignInLogs, ServicePrincipalSignInLogs, AuditLogs, RiskyUsers, UserRiskEvents\n  → Stream to an event hub (Splunk/Elastic) albo Log Analytics\nWazuh 4.6+: moduł ms-graph (resource auditLogs: signIns, directoryAudits) z aplikacją o uprawnieniach AuditLog.Read.All, Directory.Read.All\n",
     splunk:"Splunk Add-on for Microsoft Cloud Services (Event Hub) albo Splunk Add-on for Microsoft Azure (Graph):\n  input: Azure Event Hub → sourcetype azure:monitor:aad\n",
     wazuh:"<!-- moduł ms-graph (Wazuh 4.6+): resource auditLogs, relationship signIns i directoryAudits (azure-logs/graph używa wycofanego Azure AD Graph) -->\n",
     elastic:"Elastic Agent: integracja „Microsoft Entra ID” (Event Hub) — strumienie signinlogs, auditlogs, identity protection\n"},
-   test:[], det:[{n:"MFA fatigue: wiele odrzuconych powiadomień",att:"T1621",spl:R`index=azure sourcetype="azure:monitor:aad" category=SignInLogs properties.status.errorCode=500121 | bin _time span=15m | stats count by _time properties.userPrincipalName | where count>5`,kql:R`azure.signinlogs.properties.status.error_code:500121`,wz:R`data.office365.ResultStatus:*`}]},
+   test:[], det:[{n:"MFA fatigue: wiele odrzuconych powiadomień",att:"T1621",spl:R`index=azure sourcetype="azure:monitor:aad" category=SignInLogs properties.status.errorCode=500121 | bin _time span=15m | stats count by _time properties.userPrincipalName | where count>5`,kql:R`azure.signinlogs.properties.status.error_code:500121`,wz:R`data.ms-graph.status.errorCode:500121`}]},
   edr:{name:"Konsola EDR / AV", desc:"Defender for Endpoint, CrowdStrike, SentinelOne i podobne. Do SIEM idą alerty i audyt konsoli, a nie pełna telemetria.",
    items:[
     ["alerts","Alerty i incydenty EDR","API / add-on producenta",1,"L","Korelacja z pozostałymi źródłami, jedna kolejka analityka.","T1204"],
@@ -3777,6 +4093,415 @@ TYPE_ORDER.splice(0, TYPE_ORDER.length,
   "devsec","vdi","mft","itsec","voip",
   "ot","phys","facility","iot","mfp",
   "other");
+/* ---------- rozszerzenia: Cisco, Palo Alto, UniFi, Entra ID, Linux ---------- */
+function kbExt(L, o){
+  for(const k of ["items","dont","tips","test","det"]) if(o[k]) L[k] = (L[k]||[]).concat(o[k]);
+  if(o.cfg){ L.cfg = L.cfg || {}; for(const [k,v] of Object.entries(o.cfg)) L.cfg[k] = o.cfgReplace ? v : ((L.cfg[k]||"").replace(/\n*$/,"\n") + v).replace(/^\n+/,""); }
+  return L;
+}
+function kbUpItem(L, id, patch){ const it = (L.items||[]).find(x=>x[0]===id); if(it) patch.forEach((v,i)=>{ if(v!=null) it[i]=v; }); }
+
+/* ===== Cisco IOS / IOS-XE ===== */
+kbUpItem(KB.cisco.base, "cfg", [null,null,"%SYS-5-CONFIG_I, %PARSER-5-CFGLOG_LOGGEDCMD (archive log config: pełna treść poleceń)"]);
+kbExt(KB.cisco.base, {
+ items:[
+  ["aaafail","Awaria TACACS+/RADIUS i przejście na konta lokalne","%TPLUS-3-*, %RADIUS-4-RADIUS_DEAD, %AAA-3-*, logowanie kontem lokalnym",1,"L","Odcięcie serwera AAA zmusza urządzenie do kont lokalnych. Atakujący robi to celowo, żeby ominąć accounting.","T1078.003, T1562"],
+  ["enable","Podniesienie uprawnień (enable)","%SYS-5-PRIV_AUTH_PASS, %SYS-5-PRIV_AUTH_FAIL (logging userinfo)",1,"L","Kto przeszedł do trybu uprzywilejowanego i ile razy się pomylił.","T1548"],
+  ["localuser","Konta lokalne i hasła enable","archive log: username … privilege 15, enable secret, no aaa new-model",1,"L","Konto lokalne privilege 15 to typowy backdoor po przejęciu urządzenia (CVE-2023-20198).","T1136.001"],
+  ["eem","EEM, TCL i Guest Shell","archive log: event manager applet, tclsh, guestshell enable; %HA_EM-*",1,"L","Skrypty uruchamiane zdarzeniem lub z harmonogramu jako persistence i ukrywanie poleceń.","T1059.008"],
+  ["webui","Web UI IOS XE","%WEBUI-*, logowania HTTP, nowe konta i pliki implantu",1,"L","CVE-2023-20198/20273: dziesiątki tysięcy przejętych urządzeń przez interfejs WWW.","T1190"],
+  ["sshv","Sesje SSH i błędy uwierzytelnienia","%SSH-5-SSH2_SESSION, %SSH-5-SSH2_USERAUTH, %SSH-5-SSH2_CLOSE (ip ssh logging events)",2,"L","Skąd łączą się administratorzy, jakim algorytmem, brute force z tego samego źródła.","T1021.004, T1110"],
+  ["smi","Smart Install","%SMI-*, ruch na TCP 4786",2,"L","Smart Install pozwala zmienić konfigurację i obraz bez logowania.","T1190"],
+  ["ntp","Czas i NTP","%NTP-*, %SYS-6-CLOCKUPDATE (clock set)",2,"L","Przestawiony zegar psuje korelację i daty w logach.","T1070.006"]
+ ],
+ dont:[["%DOT1X-5-SUCCESS / %AUTHMGR-5-SUCCESS dla każdej stacji","Setki tysięcy wpisów dziennie. Porażki zbieraj z urządzenia, sukcesy masz w ISE/NPS."],
+   ["%LINEPROTO-5-UPDOWN i %LINK-3-UPDOWN dla portów dostępowych","Włączanie i wyłączanie komputerów. Zostaw uplinki i porty serwerowe (logging event link-status tylko na nich)."]],
+ tips:["IOS XE bez potrzeby Web UI: <code>no ip http server</code> i <code>no ip http secure-server</code>. Jeśli jest potrzebne, tylko z ACL sieci administracyjnej.",
+   "Po CVE-2023-20198 sprawdź nieznane konta privilege 15 (<code>show running-config | include username</code>) i porównaj z accountingiem TACACS+.",
+   "<code>no vstack</code> wyłącza Smart Install. <code>logging userinfo</code> dopisuje do logów podniesienie uprawnień."],
+ cfg:{dev:R`!
+! ===== uzupełnienie: uprawnienia, SSH i ryzykowne usługi
+logging userinfo
+logging buffered 64000 informational
+ip ssh version 2
+ip ssh logging events
+login block-for 120 attempts 5 within 60
+no vstack
+no ip http server
+no ip http secure-server
+! Web UI potrzebne? zamiast dwóch poleceń wyżej: ip http access-class ipv4 MGMT-ONLY
+`, wazuh:R`<!-- Na managerze: /var/ossec/etc/rules/local_rules.xml (uzupełnienie wbudowanych reguł cisco-ios) -->
+<group name="cisco_ios,local,">
+  <rule id="100400" level="12">
+    <match type="pcre2">CFGLOG_LOGGEDCMD.*username \S+ privilege 15|CFGLOG_LOGGEDCMD.*username \S+ .*secret</match>
+    <description>Cisco: utworzono lub zmieniono konto lokalne</description>
+    <mitre><id>T1136.001</id></mitre>
+  </rule>
+  <rule id="100401" level="12">
+    <match type="pcre2">CFGLOG_LOGGEDCMD.*(event manager applet|guestshell enable|tclsh|no aaa new-model|no logging host)</match>
+    <description>Cisco: EEM, Guest Shell, TCL albo wyłączenie AAA lub logowania</description>
+    <mitre><id>T1059.008</id><id>T1562</id></mitre>
+  </rule>
+  <rule id="100402" level="8">
+    <match type="pcre2">%TPLUS-3-|RADIUS_DEAD|%AAA-3-</match>
+    <description>Cisco: serwer AAA niedostępny</description>
+    <mitre><id>T1562</id></mitre>
+  </rule>
+  <rule id="100403" level="6">
+    <match>PRIV_AUTH_FAIL</match>
+    <description>Cisco: nieudane podniesienie uprawnień (enable)</description>
+    <group>authentication_failed,</group>
+  </rule>
+</group>
+`},
+ test:[["Nieudane enable","ssh na urządzenie testowe, potem enable ze złym hasłem","Szukaj %SYS-5-PRIV_AUTH_FAIL z nazwą użytkownika."],
+   ["Polecenie w archive log","conf t → description SIEMTEST na nieużywanym porcie → end","Szukaj %PARSER-5-CFGLOG_LOGGEDCMD z tekstem SIEMTEST."]],
+ det:[
+  {n:"Nowe konto lokalne privilege 15",att:"T1136.001",
+   spl:R`index=network sourcetype="cisco:ios" "CFGLOG_LOGGEDCMD" "username" ("privilege 15" OR "secret")
+| rex "User:(?<admin>[^\s]+)\s+logged command:(?<cmd>.+)" | table _time host admin cmd`,
+   kql:R`message:*CFGLOG_LOGGEDCMD* and message:*username* and message:("privilege 15" or *secret*)`, wz:R`rule.id:100400`},
+  {n:"Awaria AAA, a potem logowanie kontem lokalnym",att:"T1078.003",
+   spl:R`index=network sourcetype="cisco:ios" ("TPLUS" OR "RADIUS_DEAD" OR "LOGIN_SUCCESS")
+| eval typ=if(match(_raw,"TPLUS|RADIUS_DEAD"),"aaa_down","login")
+| transaction host maxspan=30m startswith=eval(typ="aaa_down") endswith=eval(typ="login")
+| table _time host duration _raw`,
+   kql:R`message:(*TPLUS* or *RADIUS_DEAD*) — zestaw z LOGIN_SUCCESS na tym samym hoście w 30 min (EQL sequence by host.name)`, wz:R`rule.id:100402`},
+  {n:"EEM, Guest Shell albo wyłączenie logowania",att:"T1059.008",
+   spl:R`index=network sourcetype="cisco:ios" "CFGLOG_LOGGEDCMD" ("event manager" OR "guestshell" OR "tclsh" OR "no logging" OR "no aaa") | table _time host _raw`,
+   kql:R`message:*CFGLOG_LOGGEDCMD* and message:(*event manager* or *guestshell* or *tclsh* or "no logging")`, wz:R`rule.id:100401`}]
+});
+kbExt(KB.cisco.roles.access, {
+ items:[["stormctl","Storm control i errdisable","%STORM_CONTROL-3-*, %PM-4-ERR_DISABLE",2,"L","Pętle, broadcast storm, porty wyłączone przez ochrony (psecure, bpduguard).","T1498"],
+   ["vlanchg","Zmiany VLAN na portach i trunkach","archive log: switchport access vlan, switchport mode trunk, DTP",2,"L","Przepięcie portu do VLAN-u zarządzania albo trunk w stronę stacji (VLAN hopping).","T1599"]],
+ cfg:{dev:R`! porty dostępowe: bez DTP i z ochroną przed burzami
+!  interface range Gi1/0/1-48
+!   switchport mode access
+!   switchport nonegotiate
+!   storm-control broadcast level 5.00
+!   storm-control action trap
+`}
+});
+KB.cisco.roles.nxos = {name:"Nexus (NX-OS)", desc:"Przełączniki centrum danych Cisco Nexus.",
+ items:[
+  ["nxacc","Accounting NX-OS","show accounting log / AAA accounting do TACACS+",1,"L","Pełna lista poleceń konfiguracyjnych z nazwą użytkownika.","T1059.008"],
+  ["nxbash","Bash shell i Guest Shell","feature bash-shell, run bash, guestshell",1,"L","Powłoka Linux na przełączniku: ukryte narzędzia i persistence.","T1059.004"],
+  ["nxapi","NX-API i REST","feature nxapi, logi NX-API",2,"L","Zdalne wykonywanie poleceń przez API z pominięciem SSH.","T1059"],
+  ["vpc","vPC i routing","%VPC-*, %OSPF-*, %BGP-*",3,"L","Awarie i zmiany topologii w DC.",""]],
+ dont:[["%ETHPORT-5-IF_UP/DOWN dla portów serwerowych przy restartach hostów","Szum przy oknach serwisowych. Zbieraj dla uplinków i peer-link."]],
+ tips:["NX-OS domyślnie loguje do serwera na poziomie 5. Poziom 6 włącz dla zdarzeń bezpieczeństwa, a nie dla wszystkich facility."],
+ cfg:{dev:R`! NX-OS
+logging server 10.10.1.5 6 use-vrf management
+logging source-interface mgmt0
+logging origin-id hostname
+logging timestamp milliseconds
+aaa accounting default group TACACS-GROUP
+no feature bash-shell
+! weryfikacja
+show logging server
+show accounting log last-index
+`, splunk:"", wazuh:"", elastic:""},
+ test:[["Accounting","conf t → interface Ethernet1/48 → description SIEMTEST → end","Szukaj SIEMTEST w accountingu TACACS+ i w logach urządzenia."]], det:[]};
+
+/* ===== Palo Alto ===== */
+kbExt(KB.pan.base, {
+ items:[
+  ["admfail","Nieudane logowania administratorów i blokady","pan:system (auth): failed authentication, account locked",1,"L","Zgadywanie haseł do interfejsu zarządzania i API.","T1110"],
+  ["pver","Wersja PAN-OS, aktualizacje i content","pan:system: software install, content/threat update, dynamic updates",1,"L","PAN-OS i GlobalProtect są celem masowych exploitów (CVE-2024-3400, CVE-2024-0012). Musisz wiedzieć, które firewalle są podatne i czy sygnatury są aktualne.","T1190"],
+  ["ha","HA i stan urządzenia","pan:system subtype ha, dataplane, log forwarding status",2,"L","Failover, restart dataplane, przerwy w wysyłce logów.",""],
+  ["data","Data Filtering (DLP)","pan:threat (log_subtype=data)",2,"M","Wysyłanie plików i wzorców danych wrażliwych (PESEL, karty).","T1048"],
+  ["decrypt","Błędy odszyfrowania TLS","pan:decryption (tylko błędy)",2,"M","Ruch omijający inspekcję: pinning, stare TLS, nieznane CA.","T1573"],
+  ["iptag","Tagi IP, EDL i dynamiczne grupy","pan:firewall / pan:log (type IPTAG, bez dedykowanego sourcetype) + pan:system, pan:system: EDL refresh, zmiany DAG",2,"L","Blokady z SOAR i ich nadużycie (usunięcie adresu z listy blokad).","T1562.004"],
+  ["tunnel","Inspekcja tuneli","pan:firewall / pan:log (logi Tunnel Inspection, bez dedykowanego sourcetype) (GRE, IPsec, GTP)",3,"M","Tunelowanie ruchu przez firewall.","T1572"],
+  ["corr","Zdarzenia korelacji","pan:correlation",3,"L","Gotowe korelacje PAN (np. zainfekowany host).","T1071"]
+ ],
+ dont:[["Traffic z application=incomplete / insufficient-data z Internetu","Nieudane handshake'i skanerów. Zbieraj na strefach wewnętrznych, na brzegu to szum."],
+   ["HIP match przy każdym odświeżeniu GlobalProtect","Stan hosta zmienia się rzadko. Wystarczy zmiana stanu i niezgodność."]],
+ tips:["Interfejs zarządzania i API tylko z sieci administracyjnej, nigdy z Internetu ani z GlobalProtect (CVE-2024-0012, CVE-2024-9474).",
+   "Włącz <b>Enable Log on High DP Load</b>: gdy dataplane jest przeciążony, dostaniesz log o gubieniu logów zamiast ciszy.",
+   "Nie zmieniaj Custom Log Format w profilu syslog, jeśli używasz add-onu Splunka albo modułu Filebeat: parsery oczekują formatu domyślnego."],
+ cfg:{dev:R`
+Uzupełnienie:
+  6. Device → Setup → Management → Authentication Settings: Failed Attempts 5, Lockout Time 15 min,
+     Idle Timeout 10 min; administratorzy przez RADIUS/SAML z MFA, konto lokalne tylko awaryjne
+  7. Device → Setup → Management → Logging and Reporting Settings → Log Export and Reporting:
+     Enable Log on High DP Load = on
+  8. Device → Setup → Management → Management Interface Settings → Permitted IP Addresses: sieć administracyjna
+  9. Device → Dynamic Updates: Antivirus, Applications and Threats, WildFire z harmonogramem (threat co 30 min)
+ 10. Weryfikacja wysyłki (CLI): show log system direction equal backward | match syslog
+`},
+ test:[["Nieudane logowanie admina","Zaloguj się do GUI kontem testowym ze złym hasłem","Szukaj pan:system z failed authentication i adresem źródłowym."]],
+ det:[
+  {n:"Brute force na interfejs zarządzania",att:"T1110",
+   spl:R`index=network sourcetype="pan:system" ("failed authentication" OR "authentication failed" OR "locked") | rex "From: (?<src>[\d\.]+)" | bin _time span=10m | stats count by _time host src | where count>=5`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.type:"SYSTEM" and message:"failed authentication"`, wz:R`rule.groups:paloalto AND full_log:*failed*authentication*`},
+  {n:"Zmiana konfiguracji poza oknem serwisowym",att:"T1562.004",
+   spl:R`index=network sourcetype="pan:config" | eval godz=tonumber(strftime(_time,"%H")) | where godz<7 OR godz>18 | table _time host admin client cmd path`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.type:"CONFIG"`, wz:R`rule.groups:paloalto AND data.type:CONFIG`},
+  {n:"Próby exploitacji GlobalProtect / PAN-OS",att:"T1190",
+   spl:R`index=network sourcetype="pan:threat" (threat_id=95187 OR threat_name="*GlobalProtect*" OR threat_name="*PAN-OS*") | stats count values(action) by src_ip dest_ip threat_name`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.threat.name:(*GlobalProtect* or *PAN-OS*)`, wz:R`rule.groups:paloalto AND data.threat_name:*GlobalProtect*`}]
+});
+kbExt(KB.pan.roles.gp, {
+ items:[["gpfail","Nieudane logowania do portalu i bramy","pan:globalprotect: portal-auth / gateway-auth status=failure",1,"M","Password spray na VPN, często z wielu adresów naraz.","T1110.003"],
+   ["gpclient","Wersja klienta i system urządzenia","pan:globalprotect: client version, host OS, serial",3,"L","Stare klienty z podatnościami, urządzenia prywatne.",""]],
+ tips:["Włącz MFA (SAML) dla portalu i bramy. Certyfikat urządzenia jako drugi warunek zamyka dostęp z komputerów prywatnych."],
+ det:[{n:"Password spray na GlobalProtect",att:"T1110.003",
+   spl:R`index=network sourcetype="pan:globalprotect" status="failure" eventid IN ("portal-auth","gateway-auth") | bin _time span=15m | stats dc(srcuser) as konta count by _time public_ip | where konta>=5`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.type:"GLOBALPROTECT" and event.outcome:"failure"`, wz:R`data.type:GLOBALPROTECT AND full_log:*failure*`}]
+});
+KB.pan.roles.panorama = {name:"Panorama i Log Collectory", desc:"Centralne zarządzanie i zbieranie logów z wielu firewalli.",
+ items:[
+  ["pnlogin","Logowania i role w Panoramie","pan:system / pan:config na Panoramie",1,"L","Administrator Panoramy zmienia reguły na wszystkich firewallach naraz.","T1078"],
+  ["push","Commit i push do Device Groups i Templates","pan:config: commit-all, push; pan:system: commit status",1,"L","Masowe otwarcie ruchu albo wyłączenie profili bezpieczeństwa.","T1562.004"],
+  ["lc","Log Collectory i forwarding","pan:system: log forwarding, disk quota, collector group",2,"L","Przerwa w wysyłce z Log Collectora oznacza ślepotę na wszystkie firewalle w grupie.","T1562.006"]],
+ dont:[], tips:["Przy Panoramie z Log Collectorami forwarduj logi z Collector Group, nie z każdego firewalla: jeden punkt konfiguracji, bufor na collectorze."],
+ cfg:{dev:R`Panorama:
+  1. Panorama → Server Profiles → Syslog → Add: SIEM, 10.10.1.5, TCP/SSL, 514
+  2. Panorama → Collector Groups → <grupa> → Collector Log Forwarding:
+     Traffic, Threat, URL, WildFire, Auth, Decryption, GlobalProtect, System, Config → Syslog: SIEM
+  3. Panorama → Log Settings: System, Configuration (logi samej Panoramy) → Syslog: SIEM
+  4. Commit to Panorama, potem Push to Devices (Collector Group)
+`, splunk:"", wazuh:"", elastic:""},
+ test:[["Push","Zmień opis obiektu w Device Group testowym i zrób push","Szukaj pan:config z Panoramy i commit na firewallu."]], det:[]};
+
+/* ===== Ubiquiti UniFi ===== */
+kbExt(KB.ubnt.base, {
+ items:[["admchg","Konta administratorów, role i MFA","UniFi OS: admin invited/removed, role changed, MFA disabled",1,"L","Nowy administrator albo wyłączone MFA to trwały dostęp do całej sieci.","T1098"],
+   ["fwupd","Firmware konsoli i urządzeń","System / Device: firmware updated, application updated, auto-update",2,"L","Wiesz, które urządzenia mają podatny firmware i kto wymusił downgrade.","T1601"]],
+ dont:[["Zdarzenia klientów (connect/disconnect/roaming) ze wszystkich SSID","Największy wolumen z UniFi. Zbieraj tylko dla sieci serwerowych i zarządzania albo pomiń."]],
+ tips:["UniFi Network 9.x: w Settings → CyberSecure → Traffic Logging jest opcja <b>SIEM Server</b> z formatem CEF. Wybierz ją zamiast zwykłego syslogu: pola są nazwane, łatwiej je parsować."],
+ test:[["Nowy administrator","Zaproś konto testowe jako View Only i usuń je","Szukaj Admin Activity z nazwą konta testowego."]],
+ det:[{n:"Nowy administrator albo zmiana roli w UniFi",att:"T1098",
+   spl:R`index=network sourcetype IN ("ubnt:unifi","cef") ("admin" AND ("invited" OR "added" OR "role" OR "MFA")) | table _time host _raw`,
+   kql:R`tags:"unifi" and message:*admin* and message:(*invited* or *added* or *role* or *MFA*)`, wz:R`full_log:*admin* AND full_log:*invited*`}]
+});
+kbExt(KB.ubnt.roles.ctrl, {
+ items:[["udmssh","SSH do konsoli (UniFi OS)","sshd na UDM / UCG / Cloud Key; Settings → Control Plane → Console → SSH",1,"L","Root na konsoli daje dostęp do bazy, backupów i kluczy wszystkich urządzeń.","T1021.004"],
+   ["apikey","Klucze API i integracje","Settings → Control Plane → Integrations: API key created / deleted",1,"L","Klucz API działa bez MFA. Wyciek = pełny dostęp do kontrolera.","T1098.001"]],
+ tips:["SSH do konsoli wyłączone na stałe. Włączaj na czas serwisu z unikalnym hasłem i wyłącz po pracy."]
+});
+kbExt(KB.ubnt.roles.gw, {
+ items:[["portfwd","Przekierowania portów, UPnP i DMZ","Admin Activity: port forward created/changed, UPnP enabled",1,"L","Wystawienie usługi wewnętrznej do Internetu jednym kliknięciem.","T1133"],
+   ["honey","Honeypot i blokady regionów","Security Detections: Honeypot, Region Blocking",2,"L","Honeypot UniFi wykrywa skanowanie z wnętrza sieci, czyli zainfekowany host.","T1046"],
+   ["radius","Serwer RADIUS UniFi","RADIUS accept/reject (VPN, WPA-Enterprise)",2,"M","Nieudane uwierzytelnienia VPN i Wi-Fi z jednego miejsca.","T1110"],
+   ["content","Filtrowanie treści i DNS","Security: Content Filtering, Ad Blocking, DNS Shield",3,"M","Blokady domen złośliwych, kontekst dla phishingu.","T1071.004"]],
+ dont:[["Traffic logging (Flow) dla wszystkich sieci","Log per połączenie. Tylko reguły drop i sieci serwerowe."]],
+ tips:["UPnP wyłączony na bramie. Każde przekierowanie portu powinno mieć zgłoszenie serwisowe i właściciela."],
+ cfg:{dev:"Settings → Routing → Port Forwarding: przegląd istniejących reguł\nSettings → Internet → UPnP: wyłączone\nSettings → CyberSecure → Honeypot: włącz dla sieci użytkowników\n"},
+ det:[{n:"Nowe przekierowanie portu lub włączony UPnP",att:"T1133",
+   spl:R`index=network sourcetype IN ("ubnt:unifi","cef") ("port forward" OR "Port Forwarding" OR "UPnP") | table _time host _raw`,
+   kql:R`tags:"unifi" and message:(*port forward* or *UPnP*)`, wz:R`full_log:*port*forward*`},
+  {n:"Trafienie w honeypot UniFi",att:"T1046",
+   spl:R`index=network sourcetype IN ("ubnt:unifi","cef") "Honeypot" | stats count values(dst_port) by src | sort - count`,
+   kql:R`tags:"unifi" and message:*Honeypot*`, wz:R`full_log:*Honeypot*`}]
+});
+kbExt(KB.ubnt.roles.sw, {
+ items:[["mirror","Port mirroring","Admin Activity: port mirroring enabled",1,"L","Kopia ruchu z portu serwera na port atakującego to podsłuch.","T1040"],
+   ["dot1x","802.1X i MAC auth na portach","Device events: 802.1X authentication failed",2,"L","Obce urządzenia podpięte do gniazd.","T1200"]]
+});
+kbExt(KB.ubnt.roles.ap, {
+ items:[["ssid","Nowe i zmienione sieci Wi-Fi","Admin Activity: WLAN created/changed, PSK changed",1,"L","Dodatkowe SSID bez szyfrowania albo zmiana hasła przez nieuprawnioną osobę.","T1562"],
+   ["wpafail","Nieudane uwierzytelnienia WPA / 802.1X","Clients: WPA authentication failure, RADIUS reject",2,"M","Zgadywanie PSK, wygasłe certyfikaty, próby podszycia.","T1110"]]
+});
+
+/* ===== Microsoft Entra ID ===== */
+const ENTRA = KB.cloud.roles.entra;
+ENTRA.desc = "Tożsamość w chmurze: logowania, audyt katalogu, ochrona tożsamości i aktywność Microsoft Graph.";
+kbUpItem(ENTRA, "audit", ["audit","Audyt katalogu (ogólnie)","AuditLogs (kategorie: UserManagement, GroupManagement, RoleManagement, ApplicationManagement, Policy)",1,"L","Pełna historia zmian w katalogu. Szczegółowe przypadki niżej.","T1098"]);
+kbExt(ENTRA, {
+ items:[
+  ["ca","Zmiany Conditional Access i metod uwierzytelniania","AuditLogs: Add/Update/Delete conditional access policy, Authentication Methods Policy",1,"L","Wyłączenie wymogu MFA albo wyjątek dla konta atakującego.","T1556.009"],
+  ["roles","Role katalogowe i PIM","AuditLogs: Add member to role, Add eligible member to role, Add member to role completed (PIM activation)",1,"L","Nadanie Global Administrator, Privileged Role Administrator, aktywacje PIM poza godzinami.","T1098.003"],
+  ["consent","Zgody na aplikacje i uprawnienia OAuth","AuditLogs: Consent to application, Add delegated permission grant, Add app role assignment to service principal",1,"L","Consent phishing: aplikacja atakującego z Mail.Read i offline_access czyta pocztę bez hasła.","T1528"],
+  ["appcred","Sekrety i certyfikaty aplikacji","AuditLogs: Update application – Certificates and secrets management, Add service principal credentials",1,"L","Nowy sekret na istniejącej aplikacji z wysokimi uprawnieniami to trwały backdoor (Solorigate, Midnight Blizzard).","T1098.001"],
+  ["fed","Federacja domen","AuditLogs: Set domain authentication, Set federation settings on domain, Add unverified domain",1,"L","Dodanie federacji albo zmiana certyfikatu podpisu to Golden SAML dla całego tenanta.","T1484.002"],
+  ["mfareg","Rejestracja i usuwanie metod MFA","AuditLogs: User registered security info, User deleted security info, Admin registered/reset security info",1,"L","Po przejęciu hasła atakujący dopisuje własną metodę MFA.","T1098.005"],
+  ["bgacc","Konta break-glass","SignInLogs + AuditLogs dla kont awaryjnych",1,"L","Każde użycie konta awaryjnego ma być wyjaśnione.","T1078.004"],
+  ["legacy","Legacy auth i nietypowi klienci","SignInLogs: clientAppUsed = IMAP4, POP3, SMTP, Exchange ActiveSync, Other clients",1,"M","Password spray przez protokoły bez MFA.","T1110.003"],
+  ["devcode","Device code flow i ROPC","SignInLogs: authenticationProtocol = deviceCode / ropc",1,"L","Phishing device code: ofiara wpisuje kod, atakujący dostaje tokeny.","T1528"],
+  ["b2b","Goście i dostęp między tenantami","AuditLogs: Invite external user, Update a partner cross-tenant access setting, Update the company default cross-tenant access setting",2,"L","Konto gościa z uprawnieniami do danych, zaufanie do obcego tenanta.","T1078.004"],
+  ["device","Rejestracja urządzeń","AuditLogs: Register device, Add registered owner to device",2,"L","Urządzenie atakującego zarejestrowane w tenancie omija warunek „compliant device” i dostaje PRT.","T1098.005"],
+  ["pwd","Reset haseł i SSPR","AuditLogs: Reset password (by admin), Reset password (self-service)",2,"L","Reset hasła konta uprzywilejowanego przez helpdesk (social engineering).","T1098"],
+  ["graph","Aktywność Microsoft Graph","MicrosoftGraphActivityLogs",2,"H","Enumeracja katalogu (AzureHound, GraphRunner), masowy odczyt poczty i plików przez API.","T1087.004"],
+  ["msi","Logowania tożsamości zarządzanych","ManagedIdentitySignInLogs",3,"M","Nadużycie tożsamości zasobów Azure.","T1078.004"],
+  ["prov","Provisioning i synchronizacja","ProvisioningLogs, AuditLogs (Core Directory, Sync)",3,"M","Błędy i zmiany synchronizacji z AD i aplikacjami SCIM.",""]
+ ],
+ dont:[["NonInteractiveUserSignInLogs w pełnej retencji","Kilka-kilkanaście razy więcej niż logowań interaktywnych. Trzymaj krócej (np. 30–90 dni) albo w tańszym poziomie."],
+   ["Odnowienia tokenów aplikacji Microsoft (Teams, Outlook) jako osobne alerty","Normalna praca klientów. Analizuj w ujęciu anomalii (nowy kraj, nowy ASN), nie pojedynczo."],
+   ["ProvisioningLogs dla każdej zmiany atrybutu","Wolumen proporcjonalny do liczby użytkowników. Zbieraj błędy i zmiany reguł."]],
+ tips:["Eksport logów logowań przez Diagnostic settings wymaga licencji Entra ID P1 lub P2. Bez niej zostaje API i krótka retencja w portalu.",
+   "Unified Audit Log (Audit.AzureActiveDirectory) ma część zdarzeń katalogu, ale nie zastępuje SignInLogs z Diagnostic settings.",
+   "Alarmuj zawsze: nowy sekret lub certyfikat na aplikacji z uprawnieniami aplikacyjnymi (Mail.Read, Directory.ReadWrite.All), zmiana federacji, zmiana CA, nadanie Global Administrator poza PIM.",
+   "Kody błędów warte uwagi: 50126 (złe hasło), 50053 (konto zablokowane / smart lockout), 50074 i 500121 (MFA wymagane / nieudane), 53003 (zablokowane przez CA)."],
+ cfg:{cfgReplace:true,
+  dev:R`Microsoft Entra ID — eksport logów
+  1. Event Hub (Splunk, Elastic) albo Log Analytics (Sentinel):
+     Azure Portal → Event Hubs → namespace „siem-entra” → Event Hub „entra-logs”
+     Shared access policy „siem-listen” (Listen) + osobna consumer group dla każdego odbiorcy
+  2. Entra admin center → Identity → Monitoring & health → Diagnostic settings → Add diagnostic setting:
+     AuditLogs, SignInLogs, NonInteractiveUserSignInLogs, ServicePrincipalSignInLogs,
+     ManagedIdentitySignInLogs, ProvisioningLogs, RiskyUsers, UserRiskEvents,
+     RiskyServicePrincipals, ServicePrincipalRiskEvents, MicrosoftGraphActivityLogs
+     → Stream to an event hub: „siem-entra” / „entra-logs”
+  3. Odczyt przez Graph API (Wazuh, add-ony bez Event Hub): App registration „siem-reader”
+     Application permissions: AuditLog.Read.All, Directory.Read.All, IdentityRiskEvent.Read.All,
+     SecurityAlert.Read.All, SecurityIncident.Read.All → Grant admin consent
+     Sekret z krótką ważnością (rotacja) albo certyfikat; aplikację objąć monitoringiem jak konto uprzywilejowane
+  4. Konta break-glass: lista UPN do lookupu w SIEM
+`,
+  splunk:R`Splunk Add-on for Microsoft Cloud Services (MSCS):
+  Configuration → Azure App Account / Event Hub → Inputs → Azure Event Hub:
+  namespace siem-entra, hub entra-logs, consumer group splunk → sourcetype azure:monitor:aad, index azure
+albo Splunk Add-on for Microsoft Azure (Graph API):
+  inputs Microsoft Entra ID Sign-ins / Audit / Users → azure:aad:signin, azure:aad:audit, azure:aad:user
+`,
+  wazuh:R`<!-- Wazuh 4.6+: moduł ms-graph na managerze (ossec.conf) -->
+<ms-graph>
+  <enabled>yes</enabled>
+  <only_future_events>yes</only_future_events>
+  <curl_max_size>10M</curl_max_size>
+  <run_on_start>yes</run_on_start>
+  <interval>5m</interval>
+  <version>v1.0</version>
+  <api_auth>
+    <client_id>CLIENT_ID</client_id>
+    <tenant_id>TENANT_ID</tenant_id>
+    <secret_value>SECRET</secret_value>
+    <api_type>global</api_type>
+  </api_auth>
+  <resource>
+    <name>auditLogs</name>
+    <relationship>signIns</relationship>
+    <relationship>directoryAudits</relationship>
+    <relationship>provisioning</relationship>
+  </resource>
+  <resource>
+    <name>security</name>
+    <relationship>alerts_v2</relationship>
+    <relationship>incidents</relationship>
+  </resource>
+</ms-graph>
+`,
+  elastic:R`Elastic Agent → integracja „Microsoft Entra ID” (Azure Event Hub):
+  zbiory: signinlogs, auditlogs, identity_protection, provisioning
+  + integracja „Microsoft Graph Activity Logs” (ten sam Event Hub albo osobny)
+  event hub: entra-logs, consumer group: elastic, storage account na checkpointy
+`},
+ test:[["Nieudane logowanie","Zaloguj się kontem testowym ze złym hasłem w https://myapps.microsoft.com","Szukaj SignInLogs z errorCode 50126 dla konta testowego."],
+   ["Zmiana roli","Nadaj kontu testowemu rolę Reports Reader i odbierz ją","Szukaj AuditLogs: Add member to role / Remove member from role."]],
+ det:[
+  {n:"Zgoda na aplikację z uprawnieniami do poczty lub katalogu",att:"T1528",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName="Consent to application"
+| spath path=properties.targetResources{}.modifiedProperties{}.newValue output=zakres
+| search zakres="*Mail.*" OR zakres="*Files.*" OR zakres="*Directory.*" OR zakres="*offline_access*"
+| table _time properties.initiatedBy.user.userPrincipalName properties.targetResources{}.displayName zakres`,
+   kql:R`azure.auditlogs.operation_name:"Consent to application"`, wz:R`data.ms-graph.activityDisplayName:"Consent to application"`},
+  {n:"Nowy sekret albo certyfikat aplikacji",att:"T1098.001",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName IN ("Add service principal credentials","Update application – Certificates and secrets management ")
+| table _time properties.initiatedBy.user.userPrincipalName properties.initiatedBy.app.displayName properties.targetResources{}.displayName`,
+   kql:R`azure.auditlogs.operation_name:("Add service principal credentials" or "Update application – Certificates and secrets management ")`,
+   wz:R`data.ms-graph.activityDisplayName:"Add service principal credentials"`},
+  {n:"Nadanie roli uprzywilejowanej",att:"T1098.003",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName IN ("Add member to role","Add eligible member to role")
+| spath path=properties.targetResources{}.modifiedProperties{}.newValue output=rola
+| search rola="*Global Administrator*" OR rola="*Privileged Role Administrator*" OR rola="*Application Administrator*" OR rola="*Security Administrator*"
+| table _time properties.initiatedBy.user.userPrincipalName properties.targetResources{}.userPrincipalName rola`,
+   kql:R`azure.auditlogs.operation_name:("Add member to role" or "Add eligible member to role")`, wz:R`data.ms-graph.activityDisplayName:"Add member to role"`},
+  {n:"Zmiana federacji domeny",att:"T1484.002",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName IN ("Set domain authentication","Set federation settings on domain","Add unverified domain","Verify domain") | table _time properties.initiatedBy.user.userPrincipalName operationName properties.targetResources{}.displayName`,
+   kql:R`azure.auditlogs.operation_name:("Set domain authentication" or "Set federation settings on domain")`, wz:R`data.ms-graph.activityDisplayName:"Set federation settings on domain"`},
+  {n:"Password spray (wiele kont z jednego adresu)",att:"T1110.003",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=SignInLogs properties.status.errorCode IN (50126,50053)
+| bin _time span=30m | stats dc(properties.userPrincipalName) as konta count by _time properties.ipAddress | where konta>=10`,
+   kql:R`azure.signinlogs.properties.status.error_code:(50126 or 50053)`, wz:R`data.ms-graph.status.errorCode:50126`},
+  {n:"Logowanie przez device code",att:"T1528",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=SignInLogs properties.authenticationProtocol=deviceCode | table _time properties.userPrincipalName properties.ipAddress properties.appDisplayName properties.location.countryOrRegion`,
+   kql:R`azure.signinlogs.properties.authentication_protocol:"deviceCode"`, wz:R`data.ms-graph.authenticationProtocol:deviceCode`},
+  {n:"Użycie konta break-glass",att:"T1078.004",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=SignInLogs [| inputlookup breakglass.csv | rename upn AS properties.userPrincipalName | fields properties.userPrincipalName] | table _time properties.userPrincipalName properties.ipAddress properties.status.errorCode`,
+   kql:R`azure.signinlogs.properties.user_principal_name:("bg-admin1@contoso.onmicrosoft.com" or "bg-admin2@contoso.onmicrosoft.com")`, wz:R`data.ms-graph.userPrincipalName:bg-admin*`},
+  {n:"Zmiana Conditional Access",att:"T1556.009",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName IN ("Add conditional access policy","Update conditional access policy","Delete conditional access policy") | table _time properties.initiatedBy.user.userPrincipalName operationName properties.targetResources{}.displayName`,
+   kql:R`azure.auditlogs.operation_name:*conditional access policy*`, wz:R`data.ms-graph.activityDisplayName:*conditional access policy*`}]
+});
+
+/* ===== Linux ===== */
+kbExt(KB.lin.base, {
+ items:[
+  ["pam","PAM, NSS i konfiguracja sshd","auditd -w /etc/pam.d /etc/security /etc/nsswitch.conf /etc/ssh/sshd_config",1,"L","Backdoor PAM (pam_exec, podmieniony pam_unix.so) zbiera hasła i wpuszcza bez hasła.","T1556.003"],
+  ["sshkeys","Klucze SSH użytkowników","FIM: /root/.ssh, /home/*/.ssh/authorized_keys; sshd: Accepted publickey + odcisk",1,"L","Dopisany klucz to dostęp, który przetrwa zmianę hasła.","T1098.004"],
+  ["tmpexec","Uruchamianie z /tmp, /var/tmp, /dev/shm","auditd: -F dir=/tmp -F perm=x (klucz tmp_exec)",2,"M","Pobrane narzędzia, koparki i szyfratory startują z katalogów zapisywalnych.","T1059.004"],
+  ["selinux","SELinux / AppArmor","audit.log type=AVC, MAC_STATUS (setenforce 0), zmiany /etc/selinux",2,"M","Wyłączenie SELinux przed instalacją rootkita, odmowy AVC przy exploitacji usług.","T1562.001"],
+  ["time","Zmiana czasu systemowego","auditd: adjtimex, settimeofday, clock_settime (time_change)",2,"L","Przestawienie zegara ukrywa kolejność zdarzeń.","T1070.006"],
+  ["av","Agent EDR / AV na Linuksie","status i alerty mdatp, CrowdStrike, ClamAV; zatrzymanie usługi agenta",2,"L","Wyłączenie ochrony przed atakiem, wykrycia webshelli.","T1562.001"],
+  ["cron","Wykonania zadań cron i timerów systemd","/var/log/cron, journald (CRON, systemd timers)",3,"M","Kiedy uruchamia się persistence. Sama zmiana zadania jest w auditd.","T1053.003"]
+ ],
+ dont:[["auditd execve dla wszystkich użytkowników na serwerach CI/CD i węzłach kontenerów","Tysiące procesów na minutę z buildów. Tam execve tylko dla auid interaktywnych i euid=0."],
+   ["Debug sssd, winbind, NetworkManager","Diagnostyka. Na produkcji poziom domyślny."]],
+ tips:["Kolejność reguł auditd ma znaczenie: wykluczenia (<code>-a never,exit</code>) umieść przed regułami ogólnymi, np. w pliku 10-exclude.rules.",
+   "Hosty w AD (SSSD): logowania domenowe są w secure/auth.log jako <code>pam_sss</code>. auid w audit.log to uid konta domenowego: mapuj go na nazwę konta w SIEM (ausearch -i robi to lokalnie).",
+   "Sprawdzaj ciszę z auditd osobno od auth.log. Zatrzymany auditd daje zdarzenie DAEMON_END, a potem już nic."],
+ test:[["Wykonanie z /tmp",R`cp /bin/true /tmp/siemtest && /tmp/siemtest; rm -f /tmp/siemtest`,"Szukaj klucza tmp_exec z exe=/tmp/siemtest."]],
+ det:[
+  {n:"Nowy klucz SSH w authorized_keys",att:"T1098.004",
+   spl:R`index=linux (sourcetype=linux_audit key="rootkey" OR "authorized_keys") | table _time host auid exe name`,
+   kql:R`event.module:"auditd" and (tags:"rootkey" or file.path:*authorized_keys*)`, wz:R`syscheck.path:*authorized_keys*`},
+  {n:"Zmiana konfiguracji PAM",att:"T1556.003",
+   spl:R`index=linux sourcetype=linux_audit key="pam" | table _time host auid exe name`,
+   kql:R`event.module:"auditd" and tags:"pam"`, wz:R`data.audit.key:pam OR syscheck.path:/etc/pam.d*`},
+  {n:"Uruchomienie programu z katalogu zapisywalnego",att:"T1059.004",
+   spl:R`index=linux sourcetype=linux_audit key="tmp_exec" | stats count values(exe) as pliki by host auid | sort - count`,
+   kql:R`event.module:"auditd" and tags:"tmp_exec"`, wz:R`data.audit.key:tmp_exec`},
+  {n:"Wyłączenie SELinux albo auditd",att:"T1562.001",
+   spl:R`index=linux sourcetype=linux_audit (type=MAC_STATUS enforcing=0 OR type=DAEMON_END OR key="auditconfig" OR key="selinux") | table _time host type auid exe _raw`,
+   kql:R`event.module:"auditd" and (auditd.message_type:("mac_status" or "daemon_end") or tags:("auditconfig" or "selinux"))`, wz:R`data.audit.type:(MAC_STATUS OR DAEMON_END)`},
+  {n:"Reverse shell w linii poleceń",att:"T1059.004",
+   spl:R`index=linux sourcetype=linux_audit type=EXECVE ("/dev/tcp/" OR "bash -i" OR "nc -e" OR "ncat -e" OR "socat exec" OR "python -c*socket") | table _time host auid _raw`,
+   kql:R`event.module:"auditd" and process.args:*/dev/tcp/* or process.command_line:("bash -i" or "nc -e")`, wz:R`data.audit.execve.a2:*/dev/tcp/*`}]
+});
+KB.lin.roles.samba = {name:"Serwer plików (Samba, NFS)", desc:"Udziały SMB i eksporty NFS na Linuksie.",
+ items:[
+  ["smbauth","Uwierzytelnienia SMB","log.smbd: auth_audit (json), NT_STATUS_WRONG_PASSWORD",1,"M","Brute force i spray na udziały, konta usług z nowych adresów.","T1110"],
+  ["smbfile","Operacje na plikach wrażliwych udziałów","vfs full_audit: unlinkat, renameat, pwrite (wybrane udziały)",2,"H","Masowe zmiany nazw i usuwanie plików to wzorzec szyfratora.","T1486"],
+  ["nfsexp","Zmiany eksportów NFS","auditd -w /etc/exports /etc/exports.d",1,"L","Udostępnienie katalogu z no_root_squash całej sieci.","T1222"]],
+ dont:[["full_audit dla open/read na wszystkich udziałach","Miliony zdarzeń dziennie. Tylko operacje modyfikujące i tylko na wybranych udziałach."]],
+ tips:["Wzorzec ransomware na udziale: jedno konto, setki renameat w minutę. Taka detekcja działa nawet bez agenta na stacji."],
+ cfg:{dev:R`# /etc/samba/smb.conf
+[global]
+   log level = 1 auth_audit:3 auth_json_audit:3
+   logging = file
+# tylko na udziałach z danymi wrażliwymi:
+[dane]
+   vfs objects = full_audit
+   full_audit:prefix = %u|%I|%S
+   full_audit:success = mkdirat renameat unlinkat
+   full_audit:failure = none
+   full_audit:facility = local5
+   full_audit:priority = notice
+#   full_audit trafia do syslog (local5), czyli do /var/log/messages albo /var/log/syslog zbieranych w podstawie
+
+# /etc/audit/rules.d/60-nfs.rules
+-w /etc/exports -p wa -k nfs_exports
+-w /etc/exports.d/ -p wa -k nfs_exports
+`, splunk:R`# --- rola: serwer plików ---
+[monitor:///var/log/samba/log.smbd]
+disabled = 0
+index = linux
+sourcetype = samba:smbd
+`, wazuh:R`<localfile>
+  <log_format>syslog</log_format>
+  <location>/var/log/samba/log.smbd</location>
+</localfile>
+`, elastic:R`  - type: filestream
+    id: samba
+    paths: ["/var/log/samba/log.smbd"]
+    tags: ["samba"]
+`},
+ test:[["Nieudane logowanie SMB",R`smbclient //localhost/dane -U siemtest%ZleHaslo -c ls`,"Szukaj auth_audit z NT_STATUS_LOGON_FAILURE dla siemtest."]],
+ det:[{n:"Masowe zmiany nazw plików na udziale",att:"T1486",
+   spl:R`index=linux "smbd_audit" "renameat" | rex "(?<user>[^|]+)\|(?<src>[^|]+)\|(?<share>[^|]+)\|renameat" | bin _time span=1m | stats count by _time host user src share | where count>100`,
+   kql:R`tags:"samba" and message:*renameat*`, wz:R`full_log:*renameat*`}]};
 
 /* ---------- profile zbierania: Minimum / Zalecany / Maksymalny ---------- */
 const PROFILES = {
@@ -3968,6 +4693,7 @@ const LIN_AUDIT_MIN = R`## /etc/audit/rules.d/50-siem.rules — profil Minimum (
 -w /etc/group -p wa -k identity
 -w /etc/sudoers -p wa -k sudoers
 -w /etc/sudoers.d/ -p wa -k sudoers
+-w /etc/pam.d/ -p wa -k pam
 -w /etc/ssh/sshd_config -p wa -k sshd
 -w /root/.ssh/ -p wa -k rootkey
 -w /etc/crontab -p wa -k cron
@@ -4009,8 +4735,6 @@ const LIN_AUDIT_MAX = LIN_AUDIT.replace("-b 8192", "-b 16384").replace(/## po te
 # -a always,exit -F arch=b64 -S connect -F auid>=1000 -F auid!=unset -F success=1 -k net_connect
 
 ## dodatkowe pliki konfiguracyjne
--w /etc/pam.d/ -p wa -k pam
--w /etc/security/ -p wa -k pam
 -w /etc/hosts -p wa -k hosts
 -w /etc/resolv.conf -p wa -k dns
 -w /etc/profile.d/ -p wa -k shell_profile
@@ -4060,9 +4784,9 @@ function linWazuh(prof){
     else o.push("<localfile>", `  <log_format>${f}</log_format>`, `  <location>${p}</location>`, "</localfile>");
   }
   o.push("<!-- hosty bez rsyslog (Wazuh 4.8+): -->", "<!--", "<localfile>", "  <log_format>journald</log_format>", "  <location>journald</location>", "</localfile>", "-->");
-  if(prof==="rec") o.push("", "<syscheck>", "  <frequency>43200</frequency>", `  <directories realtime="yes" check_all="yes">/etc/ssh,/etc/sudoers.d,/etc/cron.d,/etc/systemd/system</directories>`, `  <directories realtime="yes" check_all="yes">/root/.ssh</directories>`, `  <directories check_all="yes">/usr/bin,/usr/sbin</directories>`, "</syscheck>",
+  if(prof==="rec") o.push("", "<syscheck>", "  <frequency>43200</frequency>", `  <directories realtime="yes" check_all="yes">/etc/ssh,/etc/sudoers.d,/etc/cron.d,/etc/systemd/system</directories>`, `  <directories realtime="yes" check_all="yes">/root/.ssh,/home/*/.ssh,/etc/pam.d</directories>`, `  <directories check_all="yes">/usr/bin,/usr/sbin</directories>`, "</syscheck>",
     "", `<wodle name="syscollector">`, "  <disabled>no</disabled>", "  <interval>24h</interval>", "  <packages>yes</packages>", `  <ports all="no">yes</ports>`, "</wodle>");
-  if(prof==="max") o.push("", "<syscheck>", "  <frequency>43200</frequency>", `  <directories realtime="yes" check_all="yes" report_changes="yes">/etc</directories>`, "  <!-- bez treści zmian dla plików z sekretami (hash haseł, klucze prywatne) -->", "  <nodiff>/etc/shadow</nodiff>", "  <nodiff>/etc/gshadow</nodiff>", `  <nodiff type="sregex">^/etc/ssl/private/|\\.key$</nodiff>`, `  <directories realtime="yes" check_all="yes">/root/.ssh</directories>`, `  <directories check_all="yes">/usr/bin,/usr/sbin,/bin,/sbin,/boot</directories>`, "  <ignore>/etc/mtab</ignore>", "  <ignore type=\"sregex\">.log$|.swp$</ignore>", "</syscheck>",
+  if(prof==="max") o.push("", "<syscheck>", "  <frequency>43200</frequency>", `  <directories realtime="yes" check_all="yes" report_changes="yes">/etc</directories>`, "  <!-- bez treści zmian dla plików z sekretami (hash haseł, klucze prywatne) -->", "  <nodiff>/etc/shadow</nodiff>", "  <nodiff>/etc/gshadow</nodiff>", `  <nodiff type="sregex">^/etc/ssl/private/|\\.key$</nodiff>`, `  <directories realtime="yes" check_all="yes">/root/.ssh,/home/*/.ssh</directories>`, `  <directories check_all="yes">/usr/bin,/usr/sbin,/bin,/sbin,/boot</directories>`, "  <ignore>/etc/mtab</ignore>", "  <ignore type=\"sregex\">.log$|.swp$</ignore>", "</syscheck>",
     "", "<rootcheck>", "  <disabled>no</disabled>", "</rootcheck>",
     "", `<wodle name="syscollector">`, "  <disabled>no</disabled>", "  <interval>24h</interval>", "  <hardware>yes</hardware>", "  <os>yes</os>", "  <network>yes</network>", "  <packages>yes</packages>", `  <ports all="yes">yes</ports>`, "  <processes>yes</processes>", "</wodle>");
   if(prof==="min") o.push("<!-- Profil Minimum: FIM (syscheck) i inwentaryzacja wyłączone; trwałość i tożsamość pokrywają reguły auditd -->");
@@ -4150,10 +4874,6 @@ KB.cisco.base.cfgP = {
  min:{dev: KB.cisco.base.cfg.dev.replace("logging trap informational", "logging trap notifications\n! Minimum: poziom 5 obejmuje logowania (SEC_LOGIN-5), zmiany konfiguracji (SYS-5, PARSER-5) i restarty")},
  max:{dev: KB.cisco.base.cfg.dev + R`!
 ! ===== profil Maksymalny =====
-logging buffered 64000 informational
-logging userinfo
-ip ssh logging events
-login block-for 120 attempts 5 within 60
 login delay 2
 aaa accounting connection default start-stop group tacacs+
 aaa accounting system default start-stop group tacacs+
