@@ -352,6 +352,16 @@ ol.check b{color:var(--ink)}
 .badge.soft{background:var(--surface-2);color:var(--ink-2)}
 pre.cfg-file{max-height:640px}
 .cfg-bar .btns{flex-wrap:wrap}
+.flt{display:grid;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.flt .fr{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr) minmax(0,2.2fr);gap:12px;padding:10px 14px;border-top:1px solid var(--line);font-size:13px;align-items:start}
+.flt .fr:first-child{border-top:0}
+.flt .fw{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:4px;background:var(--surface-2);color:var(--ink-2);justify-self:start}
+.flt .fw-SRC,.flt .fw-AGENT{background:var(--ok-soft);color:var(--ok)}
+.flt .fw-UF,.flt .fw-API,.flt .fw-RELAY{background:var(--accent-soft);color:var(--accent)}
+.flt .fw-HF{background:var(--p2-soft);color:var(--p2)}
+.flt code{font-size:11.5px;word-break:break-all}
+:not(pre)>code{overflow-wrap:anywhere}
+@media (max-width:700px){.flt .fr{grid-template-columns:1fr}}
 </style>
 
 <div class="wrap">
@@ -407,7 +417,7 @@ pre.cfg-file{max-height:640px}
  * na warunkach licencji MIT (pełna treść: LICENSE w repozytorium oraz „Licencja i autor” w stopce aplikacji).
  * Projekt prywatny autora, tworzony hobbystycznie w czasie wolnym, rozwijany jako otwarte oprogramowanie.
  */
-const APP = Object.freeze({name:"SIEMMap", version:"3.6", author:"Marcin Lewandowski", email:"marcin.lewandowski.x@gmail.com", license:"MIT", repo:"https://github.com/mael777it/SIEMMap", copyright:"Copyright (c) 2026 Marcin Lewandowski"});
+const APP = Object.freeze({name:"SIEMMap", version:"3.9", author:"Marcin Lewandowski", email:"marcin.lewandowski.x@gmail.com", license:"MIT", repo:"https://github.com/mael777it/SIEMMap", copyright:"Copyright (c) 2026 Marcin Lewandowski"});
 /* ===================== BAZA WIEDZY =====================
    Pozycja: [id, zdarzenie, źródło/ID, priorytet 1-3, wolumen L/M/H, po co, ATT&CK]
    Warstwa (podstawa typu lub rola): {name, desc, items, dont, tips, cfg:{dev,splunk,wazuh,elastic}, test, det}
@@ -452,7 +462,7 @@ const WIN_ITEMS = [
  ["svc","Zmiana typu startu usługi","System 7040, 7045",1,"L","Wyłączanie usług zabezpieczeń, persistence.","T1562.001"],
  ["rdp","Sesje RDP","TS-LocalSessionManager 21, 22, 24, 25; RemoteConnectionManager 1149",2,"L","Kto i skąd łączył się przez RDP.","T1021.001"],
  ["winrm","WinRM / zdalny PowerShell","WinRM/Operational 6, 91",2,"L","Enter-PSSession, Invoke-Command.","T1021.006"],
- ["task","Harmonogram zadań (kontekst)","TaskScheduler/Operational 106, 140, 141, 200",3,"L","Uzupełnia 4698 o ścieżkę uruchamianej akcji.","T1053.005"],
+ ["task","Harmonogram zadań (kontekst)","TaskScheduler/Operational 106, 140, 141 (rejestracje i zmiany); 200, 201 uruchomienia w profilu Maksymalnym",3,"L","Uzupełnia 4698 o ścieżkę uruchamianej akcji.","T1053.005"],
  ["wdac","AppLocker / WDAC","AppLocker 8003, 8004, 8006, 8007; CodeIntegrity 3076, 3077",2,"L","Próby uruchomienia zablokowanych binarek i skryptów.","T1218"],
  ["bits","BITS","Bits-Client/Operational 59, 60",3,"L","Pobieranie plików przez BITS (LOLBin).","T1197"],
  ["crash","Awarie aplikacji","Application 1000, 1001",3,"M","Crash usługi może oznaczać próbę exploitacji.","T1203"],
@@ -487,6 +497,7 @@ auditpol /set /subcategory:"Security Group Management" /success:enable
 auditpol /set /subcategory:"Process Creation" /success:enable
 auditpol /set /subcategory:"Audit Policy Change" /success:enable /failure:enable
 auditpol /set /subcategory:"Authentication Policy Change" /success:enable
+auditpol /set /subcategory:"MPSSVC Rule-Level Policy Change" /success:enable /failure:enable
 auditpol /set /subcategory:"Security State Change" /success:enable
 auditpol /set /subcategory:"Security System Extension" /success:enable
 auditpol /set /subcategory:"System Integrity" /success:enable /failure:enable
@@ -499,6 +510,8 @@ auditpol /set /subcategory:"Sensitive Privilege Use" /success:disable /failure:d
 
 # Wymuś podkategorie zamiast starej polityki audytu
 reg add "HKLM\SYSTEM\CurrentControlSet\Control\Lsa" /v SCENoApplyLegacyAuditPolicy /t REG_DWORD /d 1 /f
+# Logowanie członków grup specjalnych (4964): SID-y Domain Admins (-512) i Enterprise Admins (-519) Twojej domeny
+# reg add "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Audit" /v SpecialGroups /t REG_SZ /d "S-1-5-21-<domena>-512;S-1-5-21-<domena>-519" /f
 # Linia poleceń w 4688
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit" /v ProcessCreationIncludeCmdLine_Enabled /t REG_DWORD /d 1 /f
 # PowerShell Script Block Logging
@@ -509,7 +522,8 @@ wevtutil sl Security /ms:2147483648
 # Kanał harmonogramu zadań jest domyślnie wyłączony
 wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true
 
-# Sysmon z wersjonowaną konfiguracją (np. sysmon-modular, SwiftOnSecurity)
+# Sysmon: konfiguracja z tego pakietu (host/sysmonconfig.xml dla wybranego profilu) albo własna wersjonowana
+# (sysmon-modular, SwiftOnSecurity). Szum wycinasz w niej, a nie w inputs.conf.
 sysmon64.exe -accepteula -i sysmonconfig.xml
 #   aktualizacja: sysmon64.exe -c sysmonconfig.xml
 
@@ -1311,6 +1325,8 @@ const LIN_AUDIT = R`## /etc/audit/rules.d/50-siem.rules  (załaduj: augenrules -
 -b 8192
 -f 1
 --backlog_wait_time 60000
+## pomiń błędy dla ścieżek, których nie ma na danej dystrybucji (np. /etc/apt na RHEL)
+-i
 
 ## tożsamość i uprawnienia
 -w /etc/passwd -p wa -k identity
@@ -1335,6 +1351,12 @@ const LIN_AUDIT = R`## /etc/audit/rules.d/50-siem.rules  (załaduj: augenrules -
 -w /etc/systemd/system/ -p wa -k systemd
 -w /usr/lib/systemd/system/ -p wa -k systemd
 -w /etc/ld.so.preload -p wa -k preload
+
+## repozytoria pakietów
+-w /etc/apt/sources.list -p wa -k repo
+-w /etc/apt/sources.list.d/ -p wa -k repo
+-w /etc/apt/trusted.gpg.d/ -p wa -k repo
+-w /etc/yum.repos.d/ -p wa -k repo
 
 ## polecenia wykonywane jako root przez zalogowanych użytkowników (nie przez daemony)
 -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root_cmd
@@ -2327,7 +2349,7 @@ KB.pan = {
     "Syslog po TCP albo TLS. Pojedynczy UDP przy dużym ruchu gubi logi traffic."],
   cfg:{dev:R`PAN-OS (GUI):
   1. Device → Server Profiles → Syslog → Add
-     Name: SIEM   Server: 10.10.1.5   Transport: TCP (albo SSL)   Port: 514   Format: BSD/IETF
+     Name: SIEM   Server: 10.10.1.5   Transport: TCP, Port: 514 (albo SSL, Port: 6514)   Format: BSD/IETF
   2. Device → Log Settings: System, Configuration, User-ID, HIP Match, GlobalProtect
      → Add → Filter: All Logs → Syslog: SIEM
   3. Objects → Log Forwarding → Add „default”
@@ -2346,8 +2368,8 @@ KB.pan = {
       var.syslog_host: 0.0.0.0
       var.syslog_port: 9001`)},
   test:[["Zmiana konfiguracji","Dodaj opis do obiektu testowego i zrób commit","Szukaj pan:config z nazwą obiektu."],["Test URL","curl http://urlfiltering.paloaltonetworks.com/test-malware","Szukaj pan:threat subtype url z kategorią malware."]],
-  det:[{n:"Zagrożenie krytyczne przepuszczone (allow/alert)",att:"T1190",spl:R`index=network sourcetype="pan:threat" severity IN ("critical","high") action IN ("allowed","alert") | stats count values(threat_name) by src_ip dest_ip dest_port`,
-    kql:R`event.dataset:"panw.panos" and panw.panos.threat.name:* and event.action:("allow" or "alert") and log.level:("critical" or "high")`, wz:R`rule.groups:paloalto AND data.severity:critical`}]},
+  det:[{n:"Zagrożenie krytyczne przepuszczone (allow/alert)",att:"T1190",spl:R`index=network sourcetype="pan:threat" severity IN ("critical","high") vendor_action IN ("allow","alert") | stats count values(threat_name) by src_ip dest_ip dest_port`,
+    kql:R`event.dataset:"panw.panos" and panw.panos.threat.name:* and panw.panos.action:("allow" or "alert") and log.level:("critical" or "high")`, wz:R`rule.groups:paloalto AND data.severity:critical`}]},
  roles:{
   perim:{name:"Firewall brzegowy (Internet)", desc:"Ruch do i z Internetu.",
    items:[
@@ -2363,9 +2385,9 @@ KB.pan = {
     ["userid","User-ID","pan:userid",2,"M","Mapowanie IP → użytkownik. Uzupełnia DHCP.",""]
    ], dont:[], tips:["Logowania VPN bez MFA i z krajów spoza listy zatwierdzonych to podstawowe detekcje. Portal GP nie powinien pozwalać na login bez certyfikatu urządzenia."],
    cfg:{dev:"",splunk:"",wazuh:"",elastic:""}, test:[["Logowanie VPN","Połącz się klientem GlobalProtect","Szukaj pan:globalprotect z nazwą użytkownika."]],
-   det:[{n:"Logowanie VPN z nowego kraju",att:"T1133",spl:R`index=network sourcetype="pan:globalprotect" eventid="portal-auth" status="success"
+   det:[{n:"Logowanie VPN z nowego kraju",att:"T1133",spl:R`index=network sourcetype="pan:globalprotect" event_id="portal-auth" status="success"
 | iplocation public_ip
-| stats dc(Country) as kraje values(Country) by srcuser | where kraje>1`,kql:R`event.dataset:"panw.panos" and panw.panos.type:"GLOBALPROTECT"`,wz:R`data.type:GLOBALPROTECT`}]},
+| stats dc(Country) as kraje values(Country) by src_user | where kraje>1`,kql:R`event.dataset:"panw.panos" and panw.panos.type:"GLOBALPROTECT"`,wz:R`data.type:GLOBALPROTECT`}]},
   seg:{name:"Segmentacja wewnętrzna", desc:"Firewall między strefami wewnętrznymi (np. T0 / serwery / użytkownicy).",
    items:[["east","Ruch między strefami","pan:traffic (deny + wybrane allow)",1,"M","Próby dostępu do stref T0, lateral movement.","T1021"]],
    dont:[["Allow dla ruchu masowego (backup, replikacja)","Wyłącz logowanie na regułach backupu i replikacji między znanymi hostami."]],
@@ -2740,7 +2762,7 @@ sourcetype = vmware:vclog
      kql:R`tags:"vcenter" and message:(*VmClonedEvent* or *ExportVm* or *CreateSnapshot*) and message:(*dc01* or *dc02* or *pki01*)`, wz:R`rule.id:100323`},
     {n:"Operacje w gościu przez VMware Tools",att:"T1059",
      spl:R`index=network sourcetype=vmware:vclog* "guestOperations" | table _time host _raw`,
-     kql:R`tags:"vcenter" and message:*guestOperations*`, wz:R`rule.id:100323 AND full_log:*guestOperations*`},
+     kql:R`tags:"vcenter" and message:*guestOperations*`, wz:R`full_log:*guestOperations*`},
     {n:"Logowanie administrator@vsphere.local",att:"T1078.003",
      spl:R`index=network sourcetype=vmware:vclog* "UserLoginSessionEvent" "administrator@vsphere.local" | table _time host _raw`,
      kql:R`tags:"vcenter" and message:*UserLoginSessionEvent* and message:*administrator@vsphere.local*`, wz:R`full_log:*UserLoginSessionEvent* AND full_log:*administrator@vsphere.local*`}
@@ -4218,7 +4240,7 @@ kbExt(KB.pan.base, {
  dont:[["Traffic z application=incomplete / insufficient-data z Internetu","Nieudane handshake'i skanerów. Zbieraj na strefach wewnętrznych, na brzegu to szum."],
    ["HIP match przy każdym odświeżeniu GlobalProtect","Stan hosta zmienia się rzadko. Wystarczy zmiana stanu i niezgodność."]],
  tips:["Interfejs zarządzania i API tylko z sieci administracyjnej, nigdy z Internetu ani z GlobalProtect (CVE-2024-0012, CVE-2024-9474).",
-   "Włącz <b>Enable Log on High DP Load</b>: gdy dataplane jest przeciążony, dostaniesz log o gubieniu logów zamiast ciszy.",
+   "Włącz <b>Enable Log on High DP Load</b>: gdy dataplane jest przeciążony, dostaniesz wpis w logu System, gdy obciążenie dataplane osiągnie 100% (sygnał, że logi i ruch mogą być gubione).",
    "Nie zmieniaj Custom Log Format w profilu syslog, jeśli używasz add-onu Splunka albo modułu Filebeat: parsery oczekują formatu domyślnego."],
  cfg:{dev:R`
 Uzupełnienie:
@@ -4226,7 +4248,7 @@ Uzupełnienie:
      Idle Timeout 10 min; administratorzy przez RADIUS/SAML z MFA, konto lokalne tylko awaryjne
   7. Device → Setup → Management → Logging and Reporting Settings → Log Export and Reporting:
      Enable Log on High DP Load = on
-  8. Device → Setup → Management → Management Interface Settings → Permitted IP Addresses: sieć administracyjna
+  8. Device → Setup → Interfaces → Management → Permitted IP Addresses: sieć administracyjna
   9. Device → Dynamic Updates: Antivirus, Applications and Threats, WildFire z harmonogramem (threat co 30 min)
  10. Weryfikacja wysyłki (CLI): show log system direction equal backward | match syslog
 `},
@@ -4247,7 +4269,7 @@ kbExt(KB.pan.roles.gp, {
    ["gpclient","Wersja klienta i system urządzenia","pan:globalprotect: client version, host OS, serial",3,"L","Stare klienty z podatnościami, urządzenia prywatne.",""]],
  tips:["Włącz MFA (SAML) dla portalu i bramy. Certyfikat urządzenia jako drugi warunek zamyka dostęp z komputerów prywatnych."],
  det:[{n:"Password spray na GlobalProtect",att:"T1110.003",
-   spl:R`index=network sourcetype="pan:globalprotect" status="failure" eventid IN ("portal-auth","gateway-auth") | bin _time span=15m | stats dc(srcuser) as konta count by _time public_ip | where konta>=5`,
+   spl:R`index=network sourcetype="pan:globalprotect" status="failure" event_id IN ("portal-auth","gateway-auth") | bin _time span=15m | stats dc(src_user) as konta count by _time public_ip | where konta>=5`,
    kql:R`event.dataset:"panw.panos" and panw.panos.type:"GLOBALPROTECT" and event.outcome:"failure"`, wz:R`data.type:GLOBALPROTECT AND full_log:*failure*`}]
 });
 KB.pan.roles.panorama = {name:"Panorama i Log Collectory", desc:"Centralne zarządzanie i zbieranie logów z wielu firewalli.",
@@ -4257,7 +4279,7 @@ KB.pan.roles.panorama = {name:"Panorama i Log Collectory", desc:"Centralne zarz�
   ["lc","Log Collectory i forwarding","pan:system: log forwarding, disk quota, collector group",2,"L","Przerwa w wysyłce z Log Collectora oznacza ślepotę na wszystkie firewalle w grupie.","T1562.006"]],
  dont:[], tips:["Przy Panoramie z Log Collectorami forwarduj logi z Collector Group, nie z każdego firewalla: jeden punkt konfiguracji, bufor na collectorze."],
  cfg:{dev:R`Panorama:
-  1. Panorama → Server Profiles → Syslog → Add: SIEM, 10.10.1.5, TCP/SSL, 514
+  1. Panorama → Server Profiles → Syslog → Add: SIEM, 10.10.1.5, TCP 514 albo SSL 6514
   2. Panorama → Collector Groups → <grupa> → Collector Log Forwarding:
      Traffic, Threat, URL, WildFire, Auth, Decryption, GlobalProtect, System, Config → Syslog: SIEM
   3. Panorama → Log Settings: System, Configuration (logi samej Panoramy) → Syslog: SIEM
@@ -4458,7 +4480,7 @@ kbExt(KB.lin.base, {
    kql:R`event.module:"auditd" and (auditd.message_type:("mac_status" or "daemon_end") or tags:("auditconfig" or "selinux"))`, wz:R`data.audit.type:(MAC_STATUS OR DAEMON_END)`},
   {n:"Reverse shell w linii poleceń",att:"T1059.004",
    spl:R`index=linux sourcetype=linux_audit type=EXECVE ("/dev/tcp/" OR "bash -i" OR "nc -e" OR "ncat -e" OR "socat exec" OR "python -c*socket") | table _time host auid _raw`,
-   kql:R`event.module:"auditd" and process.args:*/dev/tcp/* or process.command_line:("bash -i" or "nc -e")`, wz:R`data.audit.execve.a2:*/dev/tcp/*`}]
+   kql:R`event.module:"auditd" and (process.args:*/dev/tcp/* or process.command_line:(*bash -i* or *nc -e*))`, wz:R`data.audit.execve.a2:*/dev/tcp/*`}]
 });
 KB.lin.roles.samba = {name:"Serwer plików (Samba, NFS)", desc:"Udziały SMB i eksporty NFS na Linuksie.",
  items:[
@@ -4502,6 +4524,549 @@ sourcetype = samba:smbd
  det:[{n:"Masowe zmiany nazw plików na udziale",att:"T1486",
    spl:R`index=linux "smbd_audit" "renameat" | rex "(?<user>[^|]+)\|(?<src>[^|]+)\|(?<share>[^|]+)\|renameat" | bin _time span=1m | stats count by _time host user src share | where count>100`,
    kql:R`tags:"samba" and message:*renameat*`, wz:R`full_log:*renameat*`}]};
+/* ---------- rozszerzenia 2: iDRAC/iLO, VMware, Sophos UTM, Entra, Defender XDR, SAP, Windows, Linux ---------- */
+
+/* ===== BMC: iDRAC i iLO ===== */
+kbExt(KB.bmc.base, {cfgReplace:true, cfg:{dev:R`# Szczegółowe polecenia są w rolach „Dell iDRAC” i „HPE iLO”.
+# IPMI generyczne: wyłącz IPMI over LAN, jeśli nie jest używane (hashe RAKP da się pobrać bez logowania),
+# zmień domyślne konta, BMC tylko w odizolowanym VLAN-ie zarządzania.
+`}});
+kbExt(KB.bmc.base, {
+ items:[["bmcsilence","Cisza z BMC","porównanie inwentarza BMC z ostatnim zdarzeniem",2,"L","BMC, który przestał logować, mógł zostać zresetowany do ustawień fabrycznych albo przejęty.","T1562.006"]],
+ tips:["BMC loguje zwykle przez UDP bez bufora. Relay syslog w tej samej sieci zarządzania co BMC ogranicza straty."]
+});
+KB.bmc.roles.idrac = {name:"Dell iDRAC (8/9)", desc:"Kontrolery Dell iDRAC z Lifecycle Controller.",
+ items:[
+  ["idlogin","Logowania do iDRAC (GUI, SSH, Redfish, racadm)","LC log: USR0030 (udane), USR0031 (nieudane), USR0032 (wylogowanie)",1,"L","Kto i jakim interfejsem logował się do serwera z pominięciem systemu operacyjnego i EDR.","T1078"],
+  ["idblock","Blokady IP po nieudanych logowaniach","iDRAC.IPBlocking: blokada adresu; LC log (kategoria Audit)",1,"L","Brute force na konto root iDRAC, także przez Redfish API.","T1110"],
+  ["idscp","Eksport i import profilu konfiguracji (SCP)","LC log: Server Configuration Profile export/import (zadanie JID)",1,"L","Profil SCP zawiera pełną konfigurację BIOS, RAID i iDRAC. Import pozwala podmienić ustawienia na wielu serwerach naraz.","T1005, T1562"],
+  ["idcons","Wirtualna konsola","LC log: virtual console session start/stop",1,"L","Dostęp do ekranu serwera (także ekranu logowania DC) bez śladu w systemie.","T1021"],
+  ["idbios","Zmiany BIOS i Secure Boot","LC log: BIOS configuration job, Secure Boot disabled, boot order",1,"L","Wyłączenie Secure Boot i start z nośnika atakującego.","T1542.001"],
+  ["idtsr","SupportAssist / TSR i eksport logów","LC log: SupportAssist collection, export LC log",3,"L","Kolekcja zawiera logi i konfigurację systemu.","T1005"]
+ ],
+ dont:[["Kategoria System (czujniki, wentylatory, zasilacze) na poziomie Informational","Zdarzenia sprzętowe dla zespołu infrastruktury. Do SIEM kategorie Audit i Configuration oraz krytyczne System."]],
+ tips:["Konta lokalne iDRAC tylko awaryjne, logowanie przez AD/LDAP z grupą o minimalnych uprawnieniach. Domyślne hasło root (calvin w starszych serwerach) zmienione przy wdrożeniu.",
+   "Redfish i racadm zdalny też generują USR0030. Konto automatyzacji (OpenManage, Ansible) wyłącz z alertów, ale pilnuj jego adresów źródłowych."],
+ cfg:{dev:R`# Dell iDRAC9 — racadm lokalnie albo zdalnie: racadm -r <idrac> -u <konto> -p <hasło> ...
+# 1. Syslog
+racadm set iDRAC.SysLog.SysLogEnable 1
+racadm set iDRAC.SysLog.Server1 10.10.1.5
+racadm set iDRAC.SysLog.Server2 10.10.1.6
+racadm set iDRAC.SysLog.Port 514
+# 2. Alerty do syslog (bez tego do serwera trafiają tylko wybrane zdarzenia)
+racadm set iDRAC.IPMILan.AlertEnable 1
+racadm eventfilters set -c idrac.alert.all -a none -n remotesyslog
+# 3. Blokada IP po nieudanych logowaniach
+racadm set iDRAC.IPBlocking.BlockEnable 1
+racadm set iDRAC.IPBlocking.FailCount 5
+racadm set iDRAC.IPBlocking.FailWindow 60
+racadm set iDRAC.IPBlocking.PenaltyTime 600
+# 4. Czas i hardening
+racadm set iDRAC.NTPConfigGroup.NTPEnable 1
+racadm set iDRAC.NTPConfigGroup.NTP1 10.10.0.10
+racadm set iDRAC.IPMILan.Enable 0
+# Weryfikacja
+racadm get iDRAC.SysLog
+racadm lclog view -n 10
+`, splunk:"", wazuh:R`<!-- Na managerze: /var/ossec/etc/rules/local_rules.xml -->
+<group name="bmc,idrac,">
+  <rule id="100600" level="5">
+    <match type="pcre2">USR0031|Unable to log in for</match>
+    <description>iDRAC: nieudane logowanie</description>
+    <group>authentication_failed,</group>
+  </rule>
+  <rule id="100601" level="10" frequency="6" timeframe="300">
+    <if_matched_sid>100600</if_matched_sid>
+    <description>iDRAC: seria nieudanych logowań</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+  <rule id="100602" level="8">
+    <match type="pcre2">(?i)server configuration profile|virtual (console|media)|secure boot</match>
+    <description>iDRAC: SCP, wirtualna konsola, virtual media albo Secure Boot</description>
+    <mitre><id>T1021</id><id>T1542.001</id></mitre>
+  </rule>
+</group>
+`, elastic:""},
+ test:[["Nieudane logowanie","Zaloguj się do GUI iDRAC kontem testowym ze złym hasłem","Szukaj USR0031 z adresem źródłowym."]],
+ det:[{n:"Logowania do iDRAC spoza sieci administracyjnej",att:"T1078",
+   spl:R`index=network sourcetype=bmc:syslog "USR0030" | rex "using (?<user>\S+), from (?<src>[\d\.]+) and (?<iface>\w+)" | search NOT src="10.10.50.*" | table _time host user src iface`,
+   kql:R`tags:"bmc" and message:*USR0030* and not message:*10.10.50.*`, wz:R`full_log:*USR0030*`},
+  {n:"Seria nieudanych logowań do iDRAC",att:"T1110",
+   spl:R`index=network sourcetype=bmc:syslog "USR0031" | rex "for (?<user>\S+) from (?<src>[\d\.]+)" | bin _time span=10m | stats count by _time host src | where count>=5`,
+   kql:R`tags:"bmc" and message:*USR0031*`, wz:R`rule.id:100601`}]};
+KB.bmc.roles.ilo = {name:"HPE iLO (5/6)", desc:"Kontrolery HPE iLO.",
+ items:[
+  ["ilologin","Logowania do iLO (przeglądarka, SSH, REST)","Integrated Management Log / iLO Event Log: login, login failure",1,"L","Dostęp do konsoli serwera z pominięciem systemu.","T1078"],
+  ["iloauth","Nieudane uwierzytelnienia (każde)","Authentication Failure Logging = Enabled-every failure",1,"L","Domyślnie iLO loguje co n-tą porażkę. Każda porażka pozwala wykryć spray.","T1110"],
+  ["ilosec","Stan bezpieczeństwa iLO","Security Dashboard: IPMI/DCMI over LAN, domyślne hasło, Secure Boot, tryb FIPS/CNSA",2,"L","Ryzykowne ustawienia widoczne w jednym miejscu.","T1562"]
+ ],
+ dont:[], tips:["iLO 5/6: Security → Access Settings → Authentication Failure Logging ustaw na „Enabled-every failure”."],
+ cfg:{dev:R`HPE iLO 5/6 (GUI):
+  1. Management → Remote Syslog: Enable, Server 10.10.1.5, Port 514
+  2. Security → Access Settings: Authentication Failure Logging = Enabled-every failure,
+     IPMI/DCMI over LAN = Disabled, SSH tylko z sieci zarządzania
+  3. Security → Directory: logowanie przez AD, konta lokalne tylko awaryjne
+REST (ilorest, przykład):
+  ilorest login <ilo> -u <konto> -p <hasło>
+  ilorest set RemoteSyslogServer=10.10.1.5 RemoteSyslogEnabled=True --selector=Manager. --commit
+`, splunk:"", wazuh:"", elastic:""},
+ test:[["Nieudane logowanie","Zaloguj się do iLO kontem testowym ze złym hasłem","Szukaj wpisu Login failure z adresem."]], det:[]};
+
+/* ===== VMware ===== */
+kbExt(KB.vmw.roles.esxi, {
+ items:[
+  ["vmcreate","VM utworzone albo zarejestrowane bezpośrednio na hoście","hostd: CreateVm, RegisterVm z Host Client lub API (nie przez vCenter)",1,"L","Ukryte maszyny atakującego (rogue VM) poza inwentarzem vCenter, z dostępem do sieci produkcyjnej.","T1564.006"],
+  ["vix","Operacje w gościu z poziomu hosta (VIX / VMware Tools)","hostd: guest operations; vmtoolsd w gościu (CVE-2023-20867)",2,"L","Wykonywanie poleceń w VM z przejętego hosta bez poświadczeń systemu gościa.","T1059"],
+  ["vmxcfg","Ryzykowne zmiany ustawień VM","hostd: Reconfigure: port szeregowy do pliku lub sieci, isolation.tools.*, dołączenie dysku innej VM",2,"L","Wyciek danych przez port szeregowy, podpięcie VMDK kontrolera domeny do maszyny atakującego.","T1611, T1003.003"],
+  ["tpm","Atestacja TPM i Secure Boot hosta","vCenter: alarm Host TPM attestation; vobd: esx.problem.* (TPM, secure boot)",2,"L","Zmieniony bootloader lub VIB bez podpisu na hoście z TPM.","T1542"],
+  ["hcert","Certyfikat hosta","hostd / vpxa: wymiana certyfikatu (rui.crt)",3,"L","Podmieniony certyfikat ułatwia podsłuch ruchu zarządzania.","T1553"]
+ ],
+ det:[{n:"VM utworzona na hoście z pominięciem vCenter",att:"T1564.006",
+   spl:R`index=network sourcetype="vmw-syslog" ("CreateVm" OR "RegisterVm") NOT "vpxuser" | table _time host _raw`,
+   kql:R`tags:"esxi" and message:(*CreateVm* or *RegisterVm*) and not message:*vpxuser*`, wz:R`full_log:*RegisterVm* AND NOT full_log:*vpxuser*`}]
+});
+kbExt(KB.vmw.roles.vc, {
+ items:[
+  ["vccert","Certyfikaty vCenter i STS (podpis SSO)","certificate-manager, vecs-cli, wymiana STS signing certificate; SSO audit",1,"L","Kradzież lub podmiana certyfikatu STS to golden SAML dla vSphere.","T1606.002"],
+  ["kms","Dostawcy kluczy i szyfrowanie VM","vCenter: Key Provider (KMS, NKP) dodany/usunięty, Encrypt/Decrypt VM, Rekey",1,"L","Usunięcie dostawcy kluczy albo przeszyfrowanie VM to sabotaż lub ransomware z poziomu vCenter.","T1486"],
+  ["vcbkp","Backup plikowy VCSA","VAMI: File-Based Backup: zmiana celu, uruchomienie ręczne",1,"L","Backup VCSA zawiera bazę i sekrety SSO. Zmiana celu na serwer atakującego to wyniesienie.","T1005"],
+  ["vmdir","Katalog vsphere.local (vmdir) przez LDAP","dir-cli, ldapmodify na vmdir; SSO audit",2,"L","Dopisanie konta do grupy Administrators z pominięciem interfejsu vCenter.","T1098"]
+ ],
+ det:[{n:"Zmiana dostawcy kluczy albo szyfrowania VM",att:"T1486",
+   spl:R`index=network sourcetype=vmware:vclog* ("KeyProvider" OR "Kms" OR "CryptoManager" OR "EncryptVm" OR "DecryptVm" OR "Rekey") | table _time host _raw`,
+   kql:R`tags:"vcenter" and message:(*KeyProvider* or *CryptoManager* or *EncryptVm* or *Rekey*)`, wz:R`full_log:*CryptoManager* OR full_log:*KeyProvider*`}]
+});
+
+/* ===== Sophos UTM (SG) ===== */
+KB.fwx.roles.sophosutm = {name:"Sophos UTM 9 (SG)", desc:"Starsza platforma Sophos UTM / SG (WebAdmin, confd). Nie mylić z Sophos Firewall XG/XGS.",
+ items:[
+  ["utmadm","Logowania do WebAdmin i User Portal","webadmin.log: Successful/Failed login; aua.log (Authentication daemon)",1,"L","Brute force na panel administracyjny (port 4444) i portal użytkownika.","T1078, T1110"],
+  ["utmcfg","Zmiany konfiguracji (confd)","confd.log: zmiany obiektów, reguł i ustawień z nazwą administratora",1,"L","Kto otworzył ruch, dodał NAT albo wyłączył IPS.","T1562.004"],
+  ["utmshell","Dostęp SSH i konsola (loginuser, root)","system messages / auth: sshd, su",1,"L","Shell na UTM daje pełną kontrolę nad bramą.","T1021.004"],
+  ["utmips","IPS (Snort)","ips.log: wykrycia i blokady z sid",1,"M","Exploity z Internetu, ruch C2.","T1190"],
+  ["utmvpn","VPN: SSL VPN, IPsec, L2TP","openvpn.log, ipsec.log (charon), aua.log",1,"L","Kto i skąd łączył się przez VPN, nieudane uwierzytelnienia VPN.","T1133"],
+  ["utmupd","Up2Date, wersja i koniec wsparcia","up2date.log, wersja firmware",1,"L","UTM 9 nie dostaje już poprawek bezpieczeństwa. Każdy UTM w sieci to znane ryzyko.","T1190"],
+  ["utmpf","Packet filter: odrzucenia","packetfilter.log: action=drop/reject",2,"H","Skanowanie, ruch między strefami.","T1046"],
+  ["utmweb","Web Filter (HTTP proxy)","http.log: blokady i kategorie",2,"H","Pobrania malware, kategorie ryzykowne.","T1071.001"],
+  ["utmwaf","Web Application Firewall","reverseproxy.log (ModSecurity)",2,"H","Ataki na aplikacje publikowane przez UTM.","T1190"],
+  ["utmmail","Email Protection","smtp.log: AV, spam, kwarantanna",3,"H","Kontekst dla phishingu, jeśli UTM obsługuje pocztę.","T1566"]
+ ],
+ dont:[["Packet filter z regułami accept dla całego ruchu","Loguj drop i ruch na granicach stref."],
+   ["http.log dla wszystkich stron z kategoriami dozwolonymi","Największy wolumen z UTM. Wystarczą blokady i kategorie ryzykowne albo osobny indeks z krótką retencją."]],
+ tips:["Sophos zapowiedział koniec życia UTM 9 na 30 czerwca 2026. Po tej dacie nie ma poprawek: planuj migrację do Sophos Firewall, a do czasu wymiany traktuj logi UTM jako źródło P1.",
+   "WebAdmin (4444) i SSH tylko z sieci administracyjnej. Konta administratorów przez AD, konto admin lokalne awaryjnie z 2FA (OTP).",
+   "Na relayu przypisz adres UTM do osobnego katalogu (np. sophosutm): logi mają format klucz=wartość i własny sourcetype."],
+ cfg:{dev:R`Sophos UTM 9 (WebAdmin):
+  1. Logging & Reporting → Log Settings → Remote Syslog Server: Enable
+     Syslog servers: 10.10.1.5, TCP 514 (drugi relay: 10.10.1.6)
+  2. Remote syslog log selection (nazwy mogą się różnić między wersjami):
+     WebAdmin, Configuration daemon (confd), Authentication daemon (aua), System messages,
+     Intrusion prevention, IPsec VPN, SSL VPN, Up2Date,
+     Packet filter i Web filter tylko, jeśli masz na nie detekcje (duży wolumen)
+  3. Management → WebAdmin Settings → Allowed networks: tylko sieć administracyjna
+  4. Management → System Settings → Shell Access: wyłączone (włączaj na czas serwisu)
+`, splunk:R`# --- rola: Sophos UTM ---
+[monitor:///var/log/remote/sophosutm/*/*.log]
+disabled = 0
+host_segment = 5
+index = network
+sourcetype = sophos:utm
+# props.conf na indekserze / search head: [sophos:utm] KV_MODE = auto (pola id="..." sub="..." action="...")
+`, wazuh:R`<!-- Na managerze: /var/ossec/etc/rules/local_rules.xml -->
+<group name="sophos,utm,">
+  <rule id="100500" level="5">
+    <match type="pcre2">(?i)webadmin.*(failed|authentication failed)|aua.*(failed|denied)</match>
+    <description>Sophos UTM: nieudane logowanie (WebAdmin / portal / VPN)</description>
+    <group>authentication_failed,</group>
+  </rule>
+  <rule id="100501" level="10" frequency="8" timeframe="120">
+    <if_matched_sid>100500</if_matched_sid>
+    <description>Sophos UTM: seria nieudanych logowań</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+  <rule id="100502" level="7">
+    <match type="pcre2">confd\[\d+\]:.*(changed|created|deleted)</match>
+    <description>Sophos UTM: zmiana konfiguracji</description>
+    <mitre><id>T1562.004</id></mitre>
+  </rule>
+  <rule id="100503" level="8">
+    <match type="pcre2">sub="ips".*action="(drop|alert)"</match>
+    <description>Sophos UTM: wykrycie IPS</description>
+    <mitre><id>T1190</id></mitre>
+  </rule>
+</group>
+`, elastic:R`filebeat.inputs:
+  - type: filestream
+    id: sophos-utm
+    paths: ["/var/log/remote/sophosutm/*/*.log"]
+    tags: ["sophos","utm"]
+# Elastic Agent: integracja „Sophos” (zbiór utm) odbiera syslog UTM bezpośrednio
+`},
+ test:[["Nieudane logowanie do WebAdmin","Zaloguj się do https://<utm>:4444 kontem testowym ze złym hasłem","Szukaj wpisu webadmin z nazwą konta i adresem."]],
+ det:[{n:"Brute force na WebAdmin / VPN UTM",att:"T1110",
+   spl:R`index=network sourcetype=sophos:utm ("webadmin" OR "aua") ("failed" OR "denied") | rex "srcip=\"?(?<src>[\d\.]+)" | bin _time span=10m | stats count by _time host src | where count>=5`,
+   kql:R`tags:"utm" and message:(*webadmin* or *aua*) and message:(*failed* or *denied*)`, wz:R`rule.id:100501`},
+  {n:"Zmiana konfiguracji UTM poza oknem serwisowym",att:"T1562.004",
+   spl:R`index=network sourcetype=sophos:utm "confd" | eval godz=tonumber(strftime(_time,"%H")) | where godz<7 OR godz>18 | table _time host _raw`,
+   kql:R`tags:"utm" and message:*confd*`, wz:R`rule.id:100502`}]};
+
+/* ===== Entra ID ===== */
+kbExt(KB.cloud.roles.entra, {
+ items:[
+  ["tap","Temporary Access Pass","AuditLogs: Admin registered security info (Temporary Access Pass); użycie TAP w SignInLogs",1,"L","TAP wydany przez helpdesk pozwala zarejestrować nową metodę MFA bez starej.","T1098.005"],
+  ["loc","Named locations i zaufane adresy","AuditLogs: Add/Update/Delete named location",1,"L","Dodanie adresu atakującego do zaufanej lokalizacji wyłącza wymóg MFA w Conditional Access.","T1556.009"],
+  ["idprot","Wykrycia Identity Protection (tokeny, AiTM)","UserRiskEvents / riskDetections: anomalousToken, tokenIssuerAnomaly, attackerinTheMiddle, passwordSpray, leakedCredentials",1,"L","Kradzież sesji przez phishing AiTM omija MFA. To główny sygnał, że konto jest przejęte mimo MFA.","T1539, T1550.001"],
+  ["syncacct","Konto synchronizacji Entra Connect / Cloud Sync","SignInLogs dla Sync_* i ADToAADSyncServiceAccount; zmiany Directory Synchronization",1,"L","Konto synchronizacji może resetować hasła (password writeback). Logowanie spoza serwera Connect to incydent.","T1078.004"],
+  ["del","Usuwanie użytkowników i operacje masowe","AuditLogs: Delete user, Hard delete user, Bulk delete",2,"L","Sabotaż albo zacieranie śladów po przejęciu konta administratora.","T1531"],
+  ["au","Jednostki administracyjne i role zakresowe","AuditLogs: Add member to administrative unit, Add scoped member to role",3,"L","Delegowane uprawnienia, które łatwo przeoczyć przy przeglądzie ról.","T1098"]
+ ],
+ det:[
+  {n:"Temporary Access Pass dla konta uprzywilejowanego",att:"T1098.005",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName="Admin registered security info" "Temporary Access Pass" | table _time properties.initiatedBy.user.userPrincipalName properties.targetResources{}.userPrincipalName`,
+   kql:R`azure.auditlogs.operation_name:"Admin registered security info" and message:*Temporary Access Pass*`, wz:R`data.ms-graph.activityDisplayName:"Admin registered security info"`},
+  {n:"Zmiana zaufanych lokalizacji",att:"T1556.009",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=AuditLogs operationName IN ("Add named location","Update named location","Delete named location") | table _time properties.initiatedBy.user.userPrincipalName operationName properties.targetResources{}.displayName`,
+   kql:R`azure.auditlogs.operation_name:*named location*`, wz:R`data.ms-graph.activityDisplayName:*named location*`},
+  {n:"Token anomalny albo AiTM (Identity Protection)",att:"T1539",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=UserRiskEvents properties.riskEventType IN ("anomalousToken","tokenIssuerAnomaly","attackerinTheMiddle") | table _time properties.userPrincipalName properties.riskEventType properties.ipAddress properties.riskLevel`,
+   kql:R`azure.identity_protection.properties.risk_event_type:("anomalousToken" or "tokenIssuerAnomaly" or "attackerinTheMiddle")`, wz:R`data.ms-graph.riskEventType:anomalousToken`},
+  {n:"Konto synchronizacji logujące się spoza serwera Connect",att:"T1078.004",
+   spl:R`index=azure sourcetype="azure:monitor:aad" category=SignInLogs (properties.userPrincipalName="Sync_*" OR properties.userPrincipalName="ADToAADSyncServiceAccount*") NOT properties.ipAddress IN ("203.0.113.10") | table _time properties.userPrincipalName properties.ipAddress properties.appDisplayName`,
+   kql:R`azure.signinlogs.properties.user_principal_name:(Sync_* or ADToAADSyncServiceAccount*) and not source.ip:"203.0.113.10"`, wz:R`data.ms-graph.userPrincipalName:Sync_*`}]
+});
+
+/* ===== Microsoft Defender XDR ===== */
+KB.cloud.roles.defxdr = {name:"Microsoft Defender XDR (MDE, MDI, MDCA)", desc:"Defender for Endpoint, for Identity i for Cloud Apps. Poczta: rola „Bramka pocztowa / Defender for Office 365”.",
+ items:[
+  ["mdxalert","Alerty i incydenty Defender XDR","Graph Security API: alerts_v2, incidents",1,"L","Jedna kolejka analityka i korelacja z pozostałymi źródłami SIEM.","T1204"],
+  ["mdi","Alerty Defender for Identity","alerts_v2 (serviceSource = microsoftDefenderForIdentity): DCSync, Golden Ticket, rekonesans LDAP/SMB, pass-the-hash",1,"L","Najlepsze detekcje ataków na AD bez własnych reguł na 4662/4769.","T1003.006, T1558"],
+  ["mdihealth","Stan sensorów Defender for Identity","Health issues: sensor stopped, brak ruchu z DC, brak audytu (4662, 8004)",2,"L","DC bez działającego sensora to ślepa plamka w ochronie AD.","T1562.001"],
+  ["mdestate","Stan ochrony stacji i serwerów","tamper protection, onboarding, sensor health, EDR in block mode (Device inventory / TVM)",1,"L","Host bez aktywnego sensora albo z wyłączoną ochroną przed manipulacją.","T1562.001"],
+  ["mdeexcl","Wykluczenia AV i zmiany polityk","Defender/Operational 5007 i 5013 na hostach; audyt Intune / Security settings management",1,"L","Wykluczenie folderu albo procesu to najczęstszy sposób uruchomienia szyfratora obok Defendera.","T1562.001"],
+  ["mdelr","Live Response i akcje odpowiedzi","Action center: isolate, run script, collect package, live response session",1,"L","Live Response to zdalna powłoka SYSTEM na każdym hoście. Każde użycie ma być przypisane do zgłoszenia.","T1059"],
+  ["asr","Reguły ASR i Controlled Folder Access","Defender/Operational 1121/1122 (ASR), 1123/1124 (CFA)",2,"M","Zablokowane makra, zrzut LSASS, procesy z e-maila. Tryb audit pokazuje, co zablokujesz po włączeniu.","T1204.002"],
+  ["mdca","Defender for Cloud Apps","alerty i activity log: impossible travel, mass download, podejrzane aplikacje OAuth",2,"M","Nadużycia w SaaS i aplikacje OAuth z nadmiarowymi uprawnieniami.","T1528, T1530"],
+  ["mdeah","Surowe zdarzenia MDE (Streaming API)","DeviceProcessEvents, DeviceNetworkEvents, DeviceLogonEvents, DeviceFileEvents, DeviceRegistryEvents",3,"H","Pełna telemetria endpointu w SIEM. Drogie i dublujące Sysmona: wybierz jedno źródło.","T1059"],
+  ["tvm","Podatności i konfiguracja (TVM)","DeviceTvmSoftwareVulnerabilities, Secure Score, rekomendacje",3,"M","Kontekst: czy exploitowana podatność dotyczy hosta.","T1190"]
+ ],
+ dont:[["Wszystkie tabele Advanced Hunting przez Streaming API przy działającym Sysmonie","Podwójny koszt tej samej telemetrii. Streamuj alerty i wybrane tabele (DeviceLogonEvents, DeviceEvents), a polowanie rób w portalu Defender."],
+   ["Alerty informacyjne (severity informational) jako incydenty SIEM","Zostaw je w portalu. Do kolejki SIEM: medium i wyżej oraz wszystkie z MDI."]],
+ tips:["Tamper protection włączona w całym tenancie. Bez niej lokalny administrator wyłączy Defendera jednym poleceniem PowerShell, a 5001/5013 będą jedynym śladem.",
+   "Wykluczenia AV zarządzane centralnie (Intune / Security settings management) i przeglądane co kwartał. Lokalne wykluczenia wyłącz: DisableLocalAdminMerge.",
+   "Defender for Identity potrzebuje na DC tego samego audytu co SIEM (4662 z SACL, 8004 NTLM). Health issues w portalu mówią, czego brakuje."],
+ cfg:{dev:R`Microsoft Defender XDR
+  1. Alerty i incydenty (Graph Security API): App registration „siem-defender”
+     Application permissions: SecurityAlert.Read.All, SecurityIncident.Read.All → Grant admin consent
+  2. Surowe zdarzenia (opcjonalnie): Defender portal → Settings → Microsoft Defender XDR → Streaming API → Add
+     → Forward events to Azure Event Hub: wybrane tabele (AlertInfo, AlertEvidence, DeviceLogonEvents, DeviceEvents)
+  3. Ochrona: Settings → Endpoints → Advanced features: Tamper protection = On, EDR in block mode = On,
+     Allow or block file / Live Response: tylko dla ról SOC; Live Response unsigned scripts = Off
+  4. Defender for Identity: Settings → Identities → Sensors / Health issues: wszystkie DC i serwery AD CS / AD FS / Entra Connect
+  5. Wykluczenia: polityka AV w Intune z DisableLocalAdminMerge = 1
+`, splunk:R`Splunk Add-on for Microsoft Security (Graph Security API):
+  inputs: Microsoft 365 Defender incidents, alerts → sourcetype'y ms365:defender:incident, ms365:defender:incident:alerts
+Streaming API (Event Hub): Splunk Add-on for Microsoft Cloud Services → input Azure Event Hub, własny sourcetype (np. mde:streaming)
+Zdarzenia Defender z hostów (5001, 5007, 5013, 1116, 1121): zbiera podstawa Windows (kanał Windows Defender/Operational)
+`, wazuh:R`<!-- Defender XDR: moduł ms-graph z roli Entra ID (resource security: alerts_v2, incidents).
+     Bez roli Entra skopiuj tamten blok <ms-graph> z samym resource security.
+     Zdarzenia Defendera z hostów zbiera agent Windows (kanał Windows Defender/Operational). -->
+`, elastic:R`Elastic Agent → integracja „Microsoft Defender XDR” (alerty i incydenty przez Graph API)
+Elastic Agent → integracja „Microsoft Defender for Endpoint” (alerty MDE)
+Streaming API: integracja „Microsoft Defender XDR” w trybie Event Hub (tabele Advanced Hunting)
+`},
+ test:[["Alert testowy MDE","Na stacji testowej z MDE uruchom skrypt detekcyjny z portalu (Settings → Endpoints → Onboarding → Run a detection test)","Szukaj alertu testowego w SIEM z nazwą hosta; opóźnienie zwykle kilka minut."]],
+ det:[{n:"Wyłączenie ochrony albo nowe wykluczenie AV na hoście",att:"T1562.001",
+   spl:R`index=wineventlog source="*Windows Defender/Operational" EventCode IN (5001,5007,5013) | rex field=_raw "(?<zmiana>Exclusions[^<]+)" | table _time host EventCode zmiana`,
+   kql:R`event.code:("5001" or "5007" or "5013") and winlog.channel:"Microsoft-Windows-Windows Defender/Operational"`, wz:R`data.win.system.eventID:(5001 OR 5007 OR 5013)`},
+  {n:"Alert Defender for Identity (atak na AD)",att:"T1003.006",
+   spl:R`index=security sourcetype="ms365:defender:incident:alerts" serviceSource="microsoftDefenderForIdentity" | table _time title severity category`,
+   kql:R`event.dataset:"m365_defender.alert" and m365_defender.alert.service_source:"microsoftDefenderForIdentity"`, wz:R`data.ms-graph.serviceSource:microsoftDefenderForIdentity`},
+  {n:"Użycie Live Response (źródło: Machine Actions API, nie strumień alertów)",att:"T1059",
+   spl:R`index=security sourcetype="mde:machineactions" type="LiveResponse" | table _time requestor computerDnsName status requestorComment`,
+   kql:R`event.dataset:"mde.machineactions" and mde.type:"LiveResponse"   (własny import z Machine Actions API)`, wz:R`Wazuh: wodle command ze skryptem pobierającym /api/machineactions; reguła na type=LiveResponse`}]};
+
+/* ===== SAP ===== */
+const SAPR = KB.bizapp.roles.sap;
+SAPR.name = "SAP NetWeaver ABAP / S/4HANA";
+SAPR.desc = "System ABAP: Security Audit Log, zmiany użytkowników, transakcje krytyczne, RFC i Gateway.";
+kbUpItem(SAPR, "sal", [null,"Security Audit Log (SAL): logowania","SAL AU1 (udane), AU2 (nieudane), AUC (wylogowanie), AUM (blokada po błędnych hasłach)"]);
+kbUpItem(SAPR, "crit", [null,"Transakcje i raporty krytyczne","SAL AU3 (start transakcji), AUW (start raportu): SE16N, SE38, SA38, SM59, SU01, PFCG, SCC4, SM49, SM69, SE37"]);
+kbExt(SAPR, {
+ items:[
+  ["usr","Konta i uprawnienia (SU01, PFCG)","SAL AU7 (utworzenie), AU8 (usunięcie), AUB (zmiana uprawnień), AUD (zmiana konta); change documents (SUIM)",1,"L","Nadanie roli z SAP_ALL albo nowe konto dialogowe w produkcji.","T1098, T1136"],
+  ["sapall","SAP_ALL, SAP_NEW i konta standardowe","przypisania profili SAP_ALL/SAP_NEW; logowania SAP*, DDIC, TMSADM, EARLYWATCH",1,"L","Konta standardowe ze znanymi hasłami domyślnymi i profile pełnych uprawnień.","T1078.001"],
+  ["rfc","Logowania i wywołania RFC","SAL AU5/AU6 (logowanie RFC), AUK/AUL (wywołanie funkcji RFC udane/nieudane)",1,"M","RFC to główna droga ruchu bocznego między systemami SAP i do nich.","T1021"],
+  ["gw","SAP Gateway: rejestracje i programy zewnętrzne","gw/logging, reg_info, sec_info, gw/acl_mode; SMGW",1,"M","Niezabezpieczony Gateway pozwala zdalnie uruchamiać polecenia systemu operacyjnego jako <sid>adm.","T1210"],
+  ["salcfg","Zmiany audytu i parametrów bezpieczeństwa","SAL AUE (zmiana konfiguracji audytu); RZ10/RZ11: rsau/*, login/*, gw/*",1,"L","Wyłączenie audytu przed nadużyciem.","T1562"],
+  ["debug","Debugowanie z zamianą wartości w produkcji","SAL: zmiana wartości pól w debuggerze; autoryzacja S_DEVELOP (DEBUG, 02)",1,"L","Obejście kontroli uprawnień w trakcie działania programu.","T1548"],
+  ["transp","Transporty, zmiany kodu i otwarty klient","STMS (import), SE38/SE80 w produkcji, SCC4 (klient modyfikowalny)",1,"L","Wgranie złośliwego kodu ABAP albo backdoora przez transport.","T1505"],
+  ["tbl","Logowanie zmian tabel","rec/client, SCU3 (DBTABLOG), SE16N edit (tabele SE16N_CD_*)",2,"M","Bezpośrednie zmiany danych finansowych i konfiguracji z pominięciem transakcji.","T1565.001"],
+  ["icm","ICM / Web Dispatcher (HTTP, Fiori)","icm/HTTP/logging_0, logi dostępu HTTP",2,"H","Ataki na usługi ICF i OData wystawione do sieci.","T1190"]
+ ],
+ dont:[["SAL: pełne AU3 dla wszystkich użytkowników i transakcji","Setki tysięcy wpisów dziennie. Start transakcji tylko dla listy krytycznej i dla kont uprzywilejowanych."],
+   ["Zadania wsadowe i RFC kont technicznych między znanymi systemami","Wyłącz z alertów, ale nie z logowania: pilnuj, czy konto techniczne nie loguje się z nowego hosta."]],
+ tips:["Konta SAP* i DDIC zablokowane w każdym kliencie, <code>login/no_automatic_user_sapstar = 1</code>. Firefighter (GRC EAM) z obowiązkowym przeglądem logów po każdej sesji.",
+   "Gateway: <code>gw/acl_mode = 1</code> i utrzymywane pliki reginfo/secinfo. Pusta albo zbyt szeroka reginfo to jedna z najczęściej wykorzystywanych słabości SAP.",
+   "Pliki SAL mają sumy kontrolne (<code>rsau/integrity</code>). Do SIEM wysyłaj je na bieżąco: lokalnie SAL jest rotowany i kasowany."],
+ cfg:{cfgReplace:true,
+  dev:R`# SAP NetWeaver ABAP / S/4HANA — Security Audit Log (SAP_BASIS 7.50+)
+# 1. Parametry profilu (RZ10, profil DEFAULT):
+rsau/enable = 1
+rsau/integrity = 1
+rsau/user_selection = 1
+rsau/log_peer_address = 1
+rsau/max_diskspace/local = 1G
+login/no_automatic_user_sapstar = 1
+login/fails_to_user_lock = 5
+rec/client = ALL
+# 2. RSAU_CONFIG → filtry (klient *):
+#    wszyscy (*): Dialog logon, RFC/CPIC logon, User master changes, System, RFC function call (tylko nieudane)
+#    uprzywilejowani (SAP*, DDIC, FF_*, konta techniczne): wszystkie klasy
+#    transakcje krytyczne: Transaction start dla SE16N, SE38, SA38, SE37, SM59, SU01, PFCG, SCC4, SM49, SM69, STMS
+# 3. Gateway:
+gw/acl_mode = 1
+gw/reg_info = $(DIR_DATA)$(DIR_SEP)reginfo
+gw/sec_info = $(DIR_DATA)$(DIR_SEP)secinfo
+#    gw/logging: włącz zdarzenia bezpieczeństwa i odrzucenia (SMGW → Goto → Expert Functions → Logging)
+# 4. ICM:
+icm/HTTP/logging_0 = PREFIX=/, LOGFILE=http_%y%m%d.log, SWITCHTF=day, LOGFORMAT=CLF
+# 5. Wysyłka do SIEM (jedna z dróg):
+#    a) agent czyta pliki SAL z katalogu DIR_AUDIT (domyślnie /usr/sap/<SID>/<instancja>/log, pliki audit_*)
+#    b) konektor SAP: PowerConnect (Splunk/Elastic), Microsoft Sentinel for SAP, SAP Enterprise Threat Detection,
+#       Onapsis, SecurityBridge (pobierają SAL, change documents i logi Gateway)
+`,
+  splunk:R`Pliki SAL na serwerze aplikacyjnym (UF):
+  [monitor:///usr/sap/*/*/log/audit_*]
+  index = sap
+  sourcetype = sap:sal
+  (format rekordów stały: parsowanie przez props/transforms albo konektor)
+[monitor:///usr/sap/*/*/work/http_*.log]
+  index = sap
+  sourcetype = sap:icm:access
+Konektor: PowerConnect for SAP → HEC (SAL, change documents, Gateway, zadania)
+`,
+  wazuh:R`<!-- agent na serwerze aplikacyjnym SAP: dopisz do ossec.conf agenta (ścieżki z gwiazdką rozwija Wazuh) -->
+<ossec_config>
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/usr/sap/*/*/log/audit_*</location>
+  </localfile>
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/usr/sap/*/*/work/http_*.log</location>
+  </localfile>
+</ossec_config>
+`,
+  elastic:R`filestream na serwerze aplikacyjnym: /usr/sap/*/*/log/audit_* (tags: sap, sal) i /usr/sap/*/*/work/http_*.log
+albo PowerConnect for SAP → Elasticsearch
+`},
+ test:[["Nieudane logowanie","Zaloguj się w SAP GUI kontem testowym ze złym hasłem","Szukaj wpisu SAL AU2 dla konta testowego."],
+   ["Transakcja krytyczna","Uruchom SE16N na koncie testowym (bez edycji)","Szukaj AU3 z SE16N, o ile transakcja jest w filtrze."]],
+ det:[{n:"Przypisanie SAP_ALL albo zmiana uprawnień konta",att:"T1098",
+   spl:R`index=sap sourcetype=sap:sal ("AUB" OR "AU7" OR "AUD") | table _time host _raw`,
+   kql:R`tags:"sal" and message:(*AUB* or *AU7* or *AUD*)`, wz:R`full_log:*AUB* OR full_log:*AU7*`},
+  {n:"Logowanie kontem standardowym (SAP*, DDIC, TMSADM)",att:"T1078.001",
+   spl:R`index=sap sourcetype=sap:sal ("AU1" OR "AU5") | where like(_raw,"%SAP*%") OR match(_raw,"DDIC|TMSADM|EARLYWATCH") | table _time host _raw`,
+   kql:R`tags:"sal" and message:(*DDIC* or *TMSADM* or *EARLYWATCH*)`, wz:R`full_log:*DDIC* AND full_log:*AU1*`},
+  {n:"Seria nieudanych logowań SAP",att:"T1110",
+   spl:R`index=sap sourcetype=sap:sal ("AU2" OR "AU6") | bin _time span=15m | stats count by _time host | where count>=20`,
+   kql:R`tags:"sal" and message:(*AU2* or *AU6*)`, wz:R`full_log:*AU2*`}]
+});
+KB.bizapp.roles.saphana = {name:"SAP HANA (baza)", desc:"Baza SAP HANA pod S/4HANA i BW/4HANA.",
+ items:[
+  ["hconn","Logowania do bazy (udane i nieudane)","HANA audit: CONNECT (polityka logowań)",1,"M","Bezpośredni dostęp do bazy z pominięciem kontroli aplikacji.","T1078"],
+  ["husr","Użytkownicy, role i uprawnienia","HANA audit: CREATE/ALTER/DROP USER, GRANT/REVOKE PRIVILEGE/ROLE",1,"L","Nadanie uprawnień do danych albo konto techniczne z hasłem bez wygaśnięcia.","T1098"],
+  ["hcfg","Zmiany konfiguracji i polityk audytu","HANA audit: SYSTEM CONFIGURATION CHANGE; zmiany polityk audytu (MandatoryAuditPolicy, zawsze włączona)",1,"L","Wyłączenie audytu, zmiana parametrów bezpieczeństwa.","T1562"],
+  ["hsys","Użycie konta SYSTEM","HANA audit: działania użytkownika SYSTEM",1,"L","SYSTEM powinien być zdezaktywowany i używany tylko awaryjnie.","T1078.003"]
+ ],
+ dont:[["Audyt SELECT dla wszystkich tabel","Ogromny wolumen. Audyt odczytu tylko dla wybranych tabel z danymi osobowymi."]],
+ tips:["Użytkownik SYSTEM zdezaktywowany (<code>ALTER USER SYSTEM DEACTIVATE USER NOW</code>) po utworzeniu kont administratorów.","Polityki audytu łącz według zgodnych grup akcji: HANA odrzuca politykę z niekompatybilnymi akcjami, sprawdź w HANA Cockpit."],
+ cfg:{dev:R`-- SAP HANA: audyt do syslog systemu operacyjnego (dalej rsyslog → relay)
+ALTER SYSTEM ALTER CONFIGURATION ('global.ini','SYSTEM') SET ('auditing configuration','global_auditing_state') = 'true' WITH RECONFIGURE;
+ALTER SYSTEM ALTER CONFIGURATION ('global.ini','SYSTEM') SET ('auditing configuration','default_audit_trail_type') = 'SYSLOGPROTOCOL' WITH RECONFIGURE;
+CREATE AUDIT POLICY "SIEM_CONNECT" AUDITING ALL CONNECT LEVEL INFO;
+CREATE AUDIT POLICY "SIEM_USERS" AUDITING ALL CREATE USER, ALTER USER, DROP USER LEVEL CRITICAL;
+CREATE AUDIT POLICY "SIEM_PRIV" AUDITING ALL GRANT PRIVILEGE, REVOKE PRIVILEGE, GRANT ROLE, REVOKE ROLE LEVEL CRITICAL;
+CREATE AUDIT POLICY "SIEM_CONFIG" AUDITING ALL SYSTEM CONFIGURATION CHANGE LEVEL CRITICAL;
+-- zmiany samych polityk audytu HANA rejestruje zawsze (MandatoryAuditPolicy): nie twórz dla nich własnej polityki
+ALTER AUDIT POLICY "SIEM_CONNECT" ENABLE;
+ALTER AUDIT POLICY "SIEM_USERS" ENABLE;
+ALTER AUDIT POLICY "SIEM_PRIV" ENABLE;
+ALTER AUDIT POLICY "SIEM_CONFIG" ENABLE;
+-- weryfikacja
+SELECT * FROM AUDIT_POLICIES;
+`, splunk:"", wazuh:"", elastic:""},
+ test:[["Nieudane logowanie","hdbsql -n <host>:30015 -u SIEMTEST -p ZleHaslo","Szukaj wpisu audytu HANA CONNECT z wynikiem UNSUCCESSFUL."]], det:[]};
+KB.bizapp.roles.sapjava = {name:"SAP NetWeaver Java / Portal", desc:"AS Java, Enterprise Portal, Visual Composer, PI/PO.",
+ items:[
+  ["jhttp","Dostęp HTTP i nietypowe ścieżki","httpaccess/responses_*.trc; żądania do /developmentserver/metadatauploader, /CTCWebService/*",1,"H","CVE-2025-31324 (Visual Composer) i CVE-2020-6287 (RECON): przejęcie serwera bez logowania, webshelle w katalogu /irj.","T1190"],
+  ["jume","Użytkownicy i role UME","security.log / Security Audit: user created, role assigned (Administrator)",1,"L","Nowe konto administratora UME po exploitacji.","T1136"],
+  ["jfiles","Nowe pliki JSP i JAR w katalogach aplikacji","FIM: .../j2ee/cluster/apps/*/irj/root/, servlet_jsp",1,"L","Webshell zapisany w katalogu serwowanym przez portal.","T1505.003"]
+ ],
+ dont:[], tips:["Po ujawnieniu CVE-2025-31324 SAP i CISA zalecały przegląd katalogów irj/root i irj/work pod kątem nieznanych plików .jsp, .java i .class. Włącz FIM na tych ścieżkach."],
+ cfg:{dev:R`# SAP AS Java: HTTP access log i Security Audit
+#   NWA → Configuration → Infrastructure → Java System Properties → Services → http:
+#   LogResponses / HttpTrace włączone dla dostępu (plik responses_*.trc w .../log/system/httpaccess)
+#   NWA → Configuration → Security → Security Audit Log: włączony
+# FIM (np. Wazuh syscheck, auditd -w) na:
+#   /usr/sap/<SID>/J<nn>/j2ee/cluster/apps/sap.com/irj/servlet_jsp/irj/root/
+#   /usr/sap/<SID>/J<nn>/j2ee/cluster/apps/sap.com/irj/servlet_jsp/irj/work/
+`, splunk:"", wazuh:"", elastic:""},
+ test:[], det:[{n:"Żądania do znanych podatnych ścieżek SAP Java",att:"T1190",
+   spl:R`index=sap ("/developmentserver/metadatauploader" OR "/CTCWebService/CTCWebServiceBean") | stats count values(status) by src host uri_path`,
+   kql:R`url.path:("/developmentserver/metadatauploader" or /CTCWebService/*)`, wz:R`full_log:*metadatauploader*`}]};
+
+/* ===== Windows Server ===== */
+kbExt(KB.win.base, {
+ items:[
+  ["1100","Zatrzymanie usługi dziennika zdarzeń","Security 1100; System 6006 poza oknem restartu",1,"L","Zatrzymanie Event Log albo audytu tuż przed działaniem atakującego.","T1562.002"],
+  ["fwrule","Zmiany reguł zapory Windows","Security 4946, 4947, 4948, 4950 (MPSSVC Rule-Level Policy Change)",2,"L","Otwarcie portu RDP, WinRM albo SMB, wyłączenie profilu zapory.","T1562.004"],
+  ["share","Tworzenie i zmiany udziałów","Security 5142, 5143, 5144",2,"L","Nowy udział z dostępem dla wszystkich jako miejsce gromadzenia danych do wyniesienia.","T1074.002"],
+  ["4964","Logowanie członków grup specjalnych","Security 4964 (lista SID w rejestrze Audit\\SpecialGroups)",2,"L","Logowanie Domain Admins na serwerze T1/T2 łamie model warstwowy.","T1078.002"],
+  ["4776m","Walidacja kont lokalnych (NTLM)","Security 4776 na serwerze członkowskim",2,"M","Zgadywanie haseł lokalnych kont, pass-the-hash kontem lokalnym.","T1110, T1550.002"],
+  ["laps","Windows LAPS","Microsoft-Windows-LAPS/Operational: błędy aktualizacji hasła",2,"L","Serwer bez rotowanego hasła lokalnego administratora to ruch boczny jednym hasłem.","T1078.003"],
+  ["cred","Odczyt Credential Manager","Security 5379, 5381, 5382",3,"M","Narzędzia wyciągające zapisane poświadczenia (vaultcmd, mimikatz vault).","T1555.004"],
+  ["wu","Instalacje poprawek","WindowsUpdateClient/Operational 19, 20",3,"L","Stan poprawek do korelacji z exploitacją.","T1190"],
+  ["reg4657","Zmiany rejestru objęte SACL","Security 4657 (klucze LSA, Winlogon, IFEO z SACL)",3,"M","Zmiany ustawień ochrony poświadczeń i persistence w rejestrze.","T1112"]
+ ],
+ tips:["4964 wymaga wpisania SID-ów grup do <code>HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Audit\\SpecialGroups</code> (REG_SZ, SID-y rozdzielone średnikiem), np. Domain Admins i Enterprise Admins.",
+   "Dziennik Security pełny i nadpisywany co kilka godzin to prawie tak źle jak brak audytu. Sprawdzaj czas najstarszego zdarzenia na serwerach T0."],
+ det:[{n:"Zatrzymanie dziennika zdarzeń albo wyczyszczenie logu",att:"T1562.002",
+   spl:R`index=wineventlog (EventCode=1100 OR EventCode=1102 OR (source="*System" EventCode=104)) | table _time host EventCode SubjectUserName`,
+   kql:R`event.code:("1100" or "1102" or "104")`, wz:R`data.win.system.eventID:(1100 OR 1102 OR 104)`},
+  {n:"Nowa reguła zapory otwierająca port zarządzania",att:"T1562.004",
+   spl:R`index=wineventlog EventCode IN (4946,4947) (RuleName="*Remote*" OR RuleName="*RDP*" OR RuleName="*WinRM*" OR RuleName="*SMB*" OR RuleName="*SSH*" OR RuleName="*3389*")
+| table _time host EventCode ProfileChanged RuleId RuleName`,
+   kql:R`event.code:("4946" or "4947")`, wz:R`data.win.system.eventID:(4946 OR 4947)`},
+  {n:"Logowanie administratora domeny na serwerze nie-T0",att:"T1078.002",
+   spl:R`index=wineventlog EventCode=4964 NOT [| inputlookup t0_hosts.csv | fields host] | table _time host TargetUserName LogonGuid`,
+   kql:R`event.code:"4964" and not host.name:(dc01 or dc02 or pki01)`, wz:R`data.win.system.eventID:4964`}]
+});
+
+/* ===== Linux ===== */
+kbExt(KB.lin.base, {
+ items:[
+  ["repo","Repozytoria pakietów i klucze","auditd -w /etc/apt/sources.list.d /etc/yum.repos.d /etc/apt/trusted.gpg.d (klucz repo)",2,"L","Obce repozytorium dostarczy złośliwy pakiet przy następnej aktualizacji.","T1195.002"],
+  ["netfilter","Zmiany zapory hosta","audit.log type=NETFILTER_CFG; firewalld / nft w journald",2,"L","Otwarcie portu albo wyczyszczenie reguł przed działaniem.","T1562.004"],
+  ["bpf","Ładowanie programów eBPF","auditd -S bpf (profil Maksymalny)",3,"M","Rootkity eBPF ukrywają procesy i przechwytują ruch.","T1014"],
+  ["wtmp","Historia sesji (wtmp, btmp, lastlog)","last, lastb, lastlog (inwentaryzacja raz na dobę)",3,"L","Kontekst przy dochodzeniu, konta, które nigdy się nie logowały.","T1078"]
+ ],
+ det:[{n:"Nowe repozytorium pakietów",att:"T1195.002",
+   spl:R`index=linux sourcetype=linux_audit key="repo" | table _time host auid exe name`,
+   kql:R`event.module:"auditd" and tags:"repo"`, wz:R`data.audit.key:repo`},
+  {n:"Wyczyszczenie reguł zapory",att:"T1562.004",
+   spl:R`index=linux sourcetype=linux_audit type=NETFILTER_CFG | stats count values(op) by host auid exe | where count>0`,
+   kql:R`event.module:"auditd" and auditd.message_type:"netfilter_cfg"`, wz:R`data.audit.type:NETFILTER_CFG`}]
+});
+
+/* ===== Palo Alto: rozszerzenie 2 ===== */
+kbExt(KB.pan.base, {
+ items:[
+  ["api","Użycie XML/REST API i klucze API","pan:config (client = XML API / REST API), pan:system: generowanie klucza API",1,"L","Klucz API działa bez MFA i daje uprawnienia roli administratora. Nieznany klient API to przejęty skrypt albo konto.","T1106, T1098.001"],
+  ["admins","Konta i role administratorów","pan:config: mgt-config users, admin-role, authentication profile",1,"L","Nowe konto superuser albo zmiana profilu uwierzytelniania na lokalny bez MFA.","T1136.001, T1098"],
+  ["weaken","Osłabienie polityki bezpieczeństwa","pan:config z before/after-change-detail: reguła any-any, usunięty profil (Vulnerability, Anti-Spyware, WildFire), action allow",1,"L","Atakujący albo pośpieszny administrator wyłącza inspekcję zamiast dodać wyjątek.","T1562.004"],
+  ["certexp","Certyfikaty i klucze prywatne","pan:config / pan:system: import i eksport certyfikatów, CA odszyfrowania (Forward Trust)",1,"L","Eksport klucza CA odszyfrowania pozwala podsłuchiwać ruch TLS całej firmy.","T1552.004"],
+  ["dos","Zone Protection i DoS Protection","pan:threat subtype flood / scan (Zone Protection)",2,"M","Skanowanie i zalewanie stref, często pierwszy sygnał rekonesansu.","T1046, T1498"]
+ ],
+ tips:["W profilu syslog użyj TLS (Transport SSL, port 6514) z CA serwera syslog w zaufanych certyfikatach. Log traffic zawiera nazwy użytkowników i adresy stron, więc przesyłanie go jawnym tekstem przez sieć jest ryzykiem.",
+   "Pole <code>client</code> w logu Config (Web, CLI, XML API) mówi, czy zmianę zrobił człowiek, czy automatyzacja. Automatyzację trzymaj na osobnych kontach z rolami bez prawa commit, jeśli nie jest potrzebne."],
+ cfg:{dev:R`
+Uzupełnienie 2:
+ 11. Device → Certificate Management → Certificates: CA serwera syslog jako Trusted Root CA (opcjonalnie certyfikat klienta z atrybutem Certificate for Secure Syslog)
+     Device → Server Profiles → Syslog: Transport SSL, Port 6514, Format IETF
+ 12. Device → Admin Roles: osobne role dla automatyzacji (XML API bez commit, jeśli wystarcza odczyt)
+ 13. Device → Setup → Management → Authentication Settings → API Key Lifetime: np. 1440 min
+     (klucz API wygasa; po zmianie wymuś Expire all API Keys)
+ 14. Objects → Security Profiles → Anti-Spyware: DNS Policies → Sinkhole dla kategorii C2 i malware
+`},
+ det:[
+  {n:"Beaconing do Internetu (regularne połączenia)",att:"T1071",
+   spl:R`index=network sourcetype="pan:traffic" action="allowed" dest_zone="untrust"
+| bin _time span=1m | stats count by _time src_ip dest_ip dest_port
+| sort 0 _time | streamstats current=f last(_time) as poprz by src_ip dest_ip dest_port
+| eval odstep=_time-poprz
+| stats count avg(odstep) as sred stdev(odstep) as odch by src_ip dest_ip dest_port
+| where count>30 AND odch<sred*0.1 | sort - count`,
+   kql:R`ES|QL: FROM logs-panw.panos-* | WHERE panw.panos.action == "allow" | EVAL m = DATE_TRUNC(1 minute, @timestamp) | STATS c = COUNT_DISTINCT(m) BY source.ip, destination.ip, destination.port | WHERE c > 30`,
+   wz:R`Wazuh: indeksuje alerty, nie cały ruch; beaconing licz w SIEM z pełnym logiem traffic`},
+  {n:"Duży wypływ danych do Internetu",att:"T1041",
+   spl:R`index=network sourcetype="pan:traffic" dest_zone="untrust" | stats sum(bytes_out) as wyslane dc(dest_ip) as cele values(app) as aplikacje by src_ip user | where wyslane>2147483648 | eval GB=round(wyslane/1073741824,2) | sort - GB`,
+   kql:R`ES|QL: FROM logs-panw.panos-* | WHERE panw.panos.destination.zone == "untrust" | STATS out = SUM(source.bytes) BY source.ip | WHERE out > 2147483648 | SORT out DESC`,
+   wz:R`Wazuh: agreguj w SIEM z pełnym logiem traffic`},
+  {n:"Przepuszczony ruch do ryzykownych kategorii URL",att:"T1071.001",
+   spl:R`index=network sourcetype="pan:threat" log_subtype="url" category IN ("command-and-control","malware","phishing","grayware","newly-registered-domain","dynamic-dns") vendor_action IN ("alert","allow","continue")
+| stats count values(url) as adresy by src_ip user category`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.url.category:("command-and-control" or "malware" or "phishing" or "newly-registered-domain") and panw.panos.action:("allow" or "alert")`,
+   wz:R`rule.groups:paloalto AND full_log:*command-and-control*`},
+  {n:"Osłabienie reguł albo profili bezpieczeństwa",att:"T1562.004",
+   spl:R`index=network sourcetype="pan:config" path="*rulebase*security*" (cmd="delete" OR after_change_detail="*any*" OR after_change_detail="*allow*" OR before_change_detail="*profile-setting*")
+| table _time host admin client cmd path before_change_detail after_change_detail`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.type:"CONFIG" and message:*rulebase*`, wz:R`rule.groups:paloalto AND data.type:CONFIG AND full_log:*rulebase*`},
+  {n:"Zmiana wykonana przez API",att:"T1106",
+   spl:R`index=network sourcetype="pan:config" | where match(client,"(?i)api") | stats count values(cmd) as polecenia values(path) as sciezki by admin client host | sort - count`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.type:"CONFIG" and message:*API*`, wz:R`rule.groups:paloalto AND data.type:CONFIG AND full_log:*API*`}
+ ]
+});
+kbExt(KB.pan.roles.perim, {
+ det:[{n:"Stacje trafiające w sinkhole DNS",att:"T1071.004",
+   spl:R`index=network sourcetype="pan:traffic" [| inputlookup pan_sinkhole.csv | fields dest_ip] | stats count earliest(_time) as od latest(_time) as do by src_ip user | sort - count`,
+   kql:R`event.dataset:"panw.panos" and destination.ip:"<adres sinkhole z profilu Anti-Spyware>"`, wz:R`data.dstip:<adres sinkhole>`}],
+ tips:["Adres sinkhole ustawiasz w profilu Anti-Spyware (domyślnie nazwa sinkhole.paloaltonetworks.com). Wpisz go do lookupu w SIEM: każda stacja łącząca się z sinkhole to host z zapytaniem do domeny C2."]
+});
+kbExt(KB.pan.roles.gp, {
+ det:[{n:"Równoległe sesje VPN jednego użytkownika z różnych adresów",att:"T1078",
+   spl:R`index=network sourcetype="pan:globalprotect" event_id="gateway-connected" | bin _time span=30m | stats dc(public_ip) as adresy values(public_ip) by _time src_user | where adresy>1`,
+   kql:R`event.dataset:"panw.panos" and panw.panos.type:"GLOBALPROTECT" and event.code:"gateway-connected"`, wz:R`data.type:GLOBALPROTECT AND full_log:*gateway-connected*`}]
+});
+KB.pan.roles.userid = {name:"User-ID (mapowanie użytkowników z AD)", desc:"Firewall lub agent User-ID odczytujący logowania z kontrolerów domeny.",
+ items:[
+  ["uidsvc","Konto usługi User-ID na kontrolerach domeny","DC: 4624/4625 konta usługi (typ logowania 3 i nietypowe 2/10), zmiany grup Event Log Readers i Distributed COM Users",1,"L","Konto User-ID w Domain Admins to częsty błąd. Jego hasło zapisane na firewallu staje się kluczem do domeny.","T1078.002"],
+  ["uidmap","Mapowania IP → użytkownik","pan:userid (login/logout, źródło: server monitoring, GlobalProtect, captive portal)",2,"M","Kto stał za adresem IP w danej chwili. Uzupełnia DHCP i logi VPN.",""],
+  ["uidfail","Błędy odczytu z DC i serwerów","pan:system: User-ID server monitor disconnected, błędy WinRM/WMI",2,"L","Brak mapowań wyłącza reguły oparte na użytkownikach i grupach.","T1562"],
+  ["uidprobe","Client probing (WMI/NetBIOS)","ustawienie User-ID: Enable Probing",1,"L","Probing wysyła uwierzytelnienie konta usługi do każdej stacji, więc atakujący w sieci może przechwycić hash NTLM tego konta.","T1557"]
+ ],
+ dont:[["Wszystkie mapowania User-ID z każdego firewalla","Przy wielu firewallach to te same dane wielokrotnie. Zbieraj z jednego miejsca (Panorama / redystrybucja)."]],
+ tips:["Konto User-ID: członek wbudowanych grup Event Log Readers (odczyt 4624) i Distributed COM Users tylko przy WMI. Nigdy Domain Admins ani Server Operators. W GPO odmów mu logowania lokalnego i przez RDP.",
+   "Transport WinRM-HTTPS zamiast WMI. Client Probing wyłączone, Include/Exclude Networks tylko z sieciami użytkowników."],
+ cfg:{dev:R`PAN-OS — User-ID z serwerów AD:
+  1. Device → User Identification → User Mapping → Palo Alto Networks User-ID Agent Setup:
+     Server Monitor Account: CORP\svc-userid, Transport: WinRM-HTTPS (Kerberos)
+     Client Probing: wyłączone (Enable Probing = off)
+  2. Device → User Identification → User Mapping → Server Monitoring: tylko kontrolery domeny
+  3. Include/Exclude Networks: tylko sieci wewnętrzne z użytkownikami
+AD (GPO na kontrolerach domeny):
+  - svc-userid w BUILTIN\Event Log Readers (odczyt dziennika Security)
+  - WinRM: uprawnienia Read i Invoke dla svc-userid (winrm configSDDL default) albo członkostwo w Remote Management Users
+  - User Rights: Deny log on locally, Deny log on through Remote Desktop Services = svc-userid
+  - hasło długie, rotowane, konto w grupie Protected Users niekompatybilne z NTLM: sprawdź przed dodaniem
+`, splunk:"", wazuh:"", elastic:""},
+ test:[["Mapowanie","Zaloguj się kontem testowym na stacji w sieci objętej User-ID","Szukaj pan:userid z nazwą konta i adresem stacji."]],
+ det:[{n:"Konto User-ID logujące się interaktywnie albo spoza firewalla",att:"T1078.002",
+   spl:R`index=wineventlog EventCode=4624 TargetUserName="svc-userid" (LogonType IN (2,10) OR NOT IpAddress IN ("10.10.1.1","10.10.1.2")) | table _time host TargetUserName LogonType IpAddress WorkstationName`,
+   kql:R`event.code:"4624" and winlog.event_data.TargetUserName:"svc-userid" and (winlog.event_data.LogonType:("2" or "10") or not source.ip:("10.10.1.1" or "10.10.1.2"))`,
+   wz:R`data.win.system.eventID:4624 AND data.win.eventdata.targetUserName:svc-userid`}]};
+KB.pan.roles.sls = {name:"Strata Logging Service (Cortex Data Lake)", desc:"Firewalle i Prisma Access logujące do chmury Palo Alto, a do SIEM przez Log Forwarding.",
+ items:[
+  ["slsfwd","Forwarding z Strata Logging Service do SIEM","Log Forwarding: profile syslog/HTTPS, błędy dostarczenia, zaległości",1,"L","Gdy firewalle logują tylko do chmury, awaria forwardingu oznacza ślepotę SIEM na całą sieć.","T1562.006"],
+  ["slsquota","Kwota i retencja","wykorzystanie kwoty, logi odrzucone po przekroczeniu",2,"L","Po przekroczeniu kwoty najstarsze albo nowe logi przepadają.",""],
+  ["slsadm","Dostęp administracyjny do SLS i Hub","audit: logowania i role w Hub / Common Services",2,"L","Dostęp do surowych logów całej firmy i do konfiguracji forwardingu.","T1078.004"]
+ ],
+ dont:[], tips:["Filtruj w profilu forwardingu po typie logu: threat, system, config, globalprotect i auth w całości, traffic tylko dla wybranych stref."],
+ cfg:{dev:R`Strata Logging Service → Log Forwarding (aplikacja w Hub):
+  1. Syslog: serwer relay01.corp.example, port 6514, TLS, CA relaya, format CSV (w Splunku sourcetype pan:firewall_cloud)
+     albo HTTPS: endpoint HEC Splunka / Logstash http input z tokenem
+  2. Filtry: log_type in (threat, system, config, globalprotect, auth, userid) + traffic dla stref T0/DMZ
+  3. Alerty o błędach dostarczenia: e-mail do zespołu SIEM
+`, splunk:"", wazuh:"", elastic:""},
+ test:[["Forwarding","Wywołaj zdarzenie konfiguracyjne (opis obiektu, commit) i sprawdź czas dotarcia","Szukaj pan:config z opóźnieniem względem czasu zdarzenia; zwykle kilka minut."]], det:[]};
+KB.pan.roles.prisma = {name:"Prisma Access (SASE)", desc:"Użytkownicy mobilni i oddziały przez chmurę Palo Alto, zarządzanie w Strata Cloud Manager lub Panoramie.",
+ items:[
+  ["prauth","Uwierzytelnienia użytkowników mobilnych","GlobalProtect (Prisma Access): auth, gateway, lokalizacja",1,"M","Password spray i logowania z nowych krajów, tak jak przy GlobalProtect on-prem.","T1133, T1110"],
+  ["prcfg","Zmiany konfiguracji i push","Strata Cloud Manager / Panorama: audit, push config",1,"L","Jedna zmiana dotyczy wszystkich użytkowników i oddziałów.","T1562.004"],
+  ["prrn","Tunele Remote Networks i Service Connections","system: IPsec tunnel up/down",2,"L","Przerwy łączności oddziałów, nieautoryzowane tunele.","T1572"]
+ ],
+ dont:[], tips:["Prisma Access loguje do Strata Logging Service: do SIEM trafia przez rolę „Strata Logging Service”."],
+ cfg:{dev:"", splunk:"", wazuh:"", elastic:""}, test:[], det:[]};
 
 /* ---------- profile zbierania: Minimum / Zalecany / Maksymalny ---------- */
 const PROFILES = {
@@ -4514,27 +5079,29 @@ function inProf(it, prof){ const p = it[3], v = it[4]; return prof==="max" ? tru
 
 /* ===== Windows: jedna specyfikacja kanałów dla trzech agentów ===== */
 // wartość profilu: null = nie zbieraj, "all" = wszystko, {w:[...]} = tylko te ID, {b:[...]} = wszystko poza tymi ID
-const WIN_SEC_MIN = [1102,4719,4624,4625,4648,4672,4697,4698,4699,4700,4701,4702,4720,4722,4723,4724,4725,4726,4738,4740,4732,4733];
+const WIN_SEC_MIN = [1102,1100,4719,4624,4625,4648,4672,4697,4698,4699,4700,4701,4702,4720,4722,4723,4724,4725,4726,4738,4740,4732,4733];
 const WIN_CH = [
- {ch:"Security", idx:"wineventlog", c:{min:"tylko zdarzenia P1 (whitelist); role dopisują swoje ID", rec:"szum bez wartości detekcyjnej odfiltrowany u źródła", max:"wszystko poza zdarzeniami bez wartości (zamknięcie i duplikacja uchwytów, bind WFP)"},
-  min:{w:WIN_SEC_MIN}, rec:{b:[4656,4658,4690,5156,5157,5158,4673,4674,4703,4627,5379]}, max:{b:[4658,4690,5158]}},
- {ch:"System", idx:"wineventlog", min:{w:[104,7040,7045]}, rec:{w:[104,1074,6005,6006,6008,7040,7045]}, max:{b:[7036,10016,1500,1501,1502,1503]}},
- {ch:"Application", idx:"wineventlog", min:null, rec:{w:[1000,1001]}, max:"all", c:{max:"cały dziennik: błędy aplikacji, logi MSSQL, agentów, ADSync"}},
- {ch:"Microsoft-Windows-Sysmon/Operational", idx:"sysmon", min:{w:[1,4,8,10,12,13,14,16,17,18,19,20,21,25,255]}, rec:"all", max:"all", c:"zakres zdarzeń ustala konfiguracja Sysmona"},
- {ch:"Microsoft-Windows-PowerShell/Operational", idx:"wineventlog", min:{w:[4104]}, rec:{w:[4103,4104]}, max:{b:[4105,4106]}},
- {ch:"PowerShellCore/Operational", idx:"wineventlog", min:null, rec:{w:[4103,4104]}, max:{b:[4105,4106]}, c:"PowerShell 7: kanał istnieje po instalacji PS7 (RegisterManifest.ps1)", opt:true},
- {ch:"Windows PowerShell", idx:"wineventlog", min:{w:[400,403]}, rec:{w:[400,403]}, max:{w:[400,403,600]}},
- {ch:"Microsoft-Windows-Windows Defender/Operational", idx:"wineventlog", min:{w:[1006,1116,1117,5001,5007]}, rec:{w:[1006,1116,1117,5001,5007]}, max:{b:[1150,1151,2000,2002,2010,2014]}},
- {ch:"Microsoft-Windows-TerminalServices-LocalSessionManager/Operational", idx:"wineventlog", min:null, rec:{w:[21,22,23,24,25]}, max:"all"},
- {ch:"Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational", idx:"wineventlog", min:null, rec:{w:[1149]}, max:"all"},
+ {ch:"Security", idx:"wineventlog", c:{min:"o tym, co powstaje, decyduje polityka audytu (GPO); tu blacklista znanego szumu. 4688 wycięte, bo procesy daje Sysmon: bez Sysmona usuń 4688 z listy", rec:"o tym, co powstaje, decyduje polityka audytu (GPO); tu tylko blacklista znanego szumu, reszta wchodzi", max:"polityka audytu decyduje o zakresie; wycięte tylko zdarzenia bez wartości (zamknięcie i duplikacja uchwytów, bind WFP)"},
+  min:{b:[4634,4627,4656,4658,4688,4690,4703,5156,5157,5158,4673,4674,5379]}, rec:{b:[4634,4627,4656,4658,4690,4703,5156,5157,5158,4673,4674,5379]}, max:{b:[4658,4690,5158]}},
+ {ch:"System", idx:"wineventlog", c:"kanał głośny: whitelista przydatnych ID", min:{w:[104,7040,7045]}, rec:{w:[104,1074,6005,6006,6008,7040,7045]}, max:{w:[41,104,1074,1076,5827,5828,5829,6005,6006,6008,7031,7034,7040,7045,20001]}},
+ {ch:"Application", idx:"wineventlog", c:"kanał głośny: whitelista (role dopisują swoje ID)", min:null, rec:{w:[1000,1001]}, max:{w:[1000,1001,1002,1026,1033,1034,11707,11724]}},
+ {ch:"Microsoft-Windows-Sysmon/Operational", idx:"sysmon", c:"bez list w inputs.conf: zakres zdarzeń wycina host/sysmonconfig.xml z tego pakietu (niechciane zdarzenia w ogóle nie powstają)", min:"all", rec:"all", max:"all"},
+ {ch:"Microsoft-Windows-PowerShell/Operational", idx:"wineventlog", c:"kanał głośny: whitelista (4104 script block, 4103 moduły)", min:{w:[4104]}, rec:{w:[4103,4104]}, max:{w:[4100,4103,4104]}},
+ {ch:"PowerShellCore/Operational", idx:"wineventlog", min:null, rec:{w:[4103,4104]}, max:{w:[4100,4103,4104]}, c:"PowerShell 7: kanał istnieje po instalacji PS7 (RegisterManifest.ps1)", opt:true},
+ {ch:"Windows PowerShell", idx:"wineventlog", c:"whitelista: 400/403 start i stop silnika (wykrywa downgrade do PS 2.0)", min:{w:[400,403]}, rec:{w:[400,403]}, max:{w:[400,403,600]}},
+ {ch:"Microsoft-Windows-Windows Defender/Operational", idx:"wineventlog", c:"whitelista: wykrycia, ASR, zmiany ochrony i wykluczeń", min:{w:[1006,1116,1117,5001,5007,5013]}, rec:{w:[1006,1116,1117,1121,5001,5007,5013]}, max:{w:[1006,1007,1009,1013,1015,1116,1117,1118,1119,1121,1122,1123,1124,5001,5004,5007,5008,5010,5012,5013]}},
+ {ch:"Microsoft-Windows-TerminalServices-LocalSessionManager/Operational", idx:"wineventlog", min:null, rec:{w:[21,22,23,24,25]}, max:{w:[21,22,23,24,25,39,40]}},
+ {ch:"Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational", idx:"wineventlog", min:null, rec:{w:[1149]}, max:{w:[261,1149]}},
  {ch:"Microsoft-Windows-TerminalServices-RDPClient/Operational", idx:"wineventlog", min:null, rec:null, max:{w:[1024,1026,1102]}, c:"wychodzące RDP z tego hosta"},
- {ch:"Microsoft-Windows-WinRM/Operational", idx:"wineventlog", min:null, rec:{w:[6,91]}, max:"all"},
- {ch:"Microsoft-Windows-TaskScheduler/Operational", idx:"wineventlog", min:null, rec:{w:[106,140,141,200]}, max:{w:[106,140,141,142,200,201]}},
+ {ch:"Microsoft-Windows-WinRM/Operational", idx:"wineventlog", c:"kanał głośny przy monitoringu i SCCM: whitelista", min:null, rec:{w:[6,91]}, max:{w:[6,91,142,161,169]}},
+ {ch:"Microsoft-Windows-TaskScheduler/Operational", idx:"wineventlog", c:"kanał głośny (każde uruchomienie zadania): whitelista; w Zalecanym tylko rejestracje i zmiany, w Maksymalnym także uruchomienia", min:null, rec:{w:[106,140,141]}, max:{w:[106,140,141,142,200,201]}},
  {ch:"Microsoft-Windows-WMI-Activity/Operational", idx:"wineventlog", min:null, rec:{w:[5861]}, max:{w:[5857,5858,5860,5861]}, c:"5861 = trwała subskrypcja WMI (persistence)"},
  {ch:"Microsoft-Windows-CodeIntegrity/Operational", idx:"wineventlog", min:null, rec:{w:[3076,3077]}, max:{w:[3033,3034,3063,3064,3076,3077]}},
  {ch:"Microsoft-Windows-AppLocker/EXE and DLL", idx:"wineventlog", min:null, rec:{w:[8003,8004]}, max:{w:[8003,8004]}},
  {ch:"Microsoft-Windows-AppLocker/MSI and Script", idx:"wineventlog", min:null, rec:{w:[8006,8007]}, max:{w:[8006,8007]}},
  {ch:"Microsoft-Windows-Bits-Client/Operational", idx:"wineventlog", min:null, rec:{w:[59,60]}, max:{w:[3,59,60,61]}},
+ {ch:"Microsoft-Windows-LAPS/Operational", idx:"wineventlog", min:null, rec:"all", max:"all", c:"Windows LAPS (Windows Server 2019+ z aktualizacją z kwietnia 2023)", opt:true},
+ {ch:"Microsoft-Windows-WindowsUpdateClient/Operational", idx:"wineventlog", min:null, rec:null, max:{w:[19,20]}, c:"instalacje poprawek (19 sukces, 20 błąd)"},
  {ch:"Microsoft-Windows-NTLM/Operational", idx:"wineventlog", min:null, rec:null, max:"all", c:"wymaga włączenia audytu NTLM (GPO Network security: Restrict NTLM: Audit ...)"},
  {ch:"Microsoft-Windows-SMBServer/Security", idx:"wineventlog", min:null, rec:null, max:"all"},
  {ch:"Microsoft-Windows-SmbClient/Security", idx:"wineventlog", min:null, rec:null, max:"all"},
@@ -4549,8 +5116,13 @@ function winSpecFor(prof, extraSec){
 function winSplunk(prof, extraSec){
   const o = [R`# Splunk Universal Forwarder: etc\apps\org_win_base\local\inputs.conf`,
     "# Po stronie wyszukiwania: Splunk Add-on for Microsoft Windows + Splunk Add-on for Sysmon.",
-    "# renderXml = true daje stabilne nazwy pól i krótsze zdarzenia."];
-  if(prof==="min") o.push("# Profil Minimum: brak Sysmona? Dopisz 4688 do whitelisty Security (tworzenie procesów z linią poleceń).");
+    "# renderXml = true daje stabilne nazwy pól i krótsze zdarzenia.",
+    "#",
+    "# Zasada: filtruj tam, gdzie zdarzenie powstaje.",
+    "#  - Sysmon: zakres wycina konfiguracja Sysmona (host/sysmonconfig.xml), w inputs.conf sam kanał bez list",
+    "#  - Security: o tym, co powstaje, decyduje polityka audytu (GPO/auditpol); tu tylko blacklista znanego szumu",
+    "#  - kanały głośne z kilkoma przydatnymi ID (System, Application, PowerShell, TaskScheduler, Defender): whitelista",
+    "#  - małe kanały o wysokiej wartości (LAPS, SMB Security, LSA, NTLM): w całości"];
   o.push("");
   for(const c of winSpecFor(prof, extraSec)){
     if(c.c) o.push("# " + c.c);
@@ -4568,7 +5140,9 @@ const XPATH_MAX = 20;
 const WZ_SEC_MIN_FALLBACK = [4634,4656,4658,4663,4670,4688,4690,4703,4627,4673,4674,5140,5145,5156,5157,5158,5379,4798,4799,5447];
 function wzQuery(v){ if(v==="all") return ""; if((v.w||v.b).length > XPATH_MAX) return null; if(v.w) return "Event/System[" + v.w.map(i=>"EventID="+i).join(" or ") + "]"; return "Event/System[" + v.b.map(i=>"EventID != "+i).join(" and ") + "]"; }
 function winWazuh(prof, extraSec){
-  const o = ["<!-- Wazuh agent (Windows): centralnie shared/<grupa>/agent.conf na managerze albo ossec.conf agenta -->"];
+  const o = ["<!-- Wazuh agent (Windows): centralnie shared/<grupa>/agent.conf na managerze albo ossec.conf agenta -->",
+    "<!-- Zasada: Sysmon filtruje sysmonconfig.xml, Security polityka audytu + wykluczenie szumu, kanały głośne: lista ID -->",
+    "<!-- Domyślny ossec.conf agenta Windows ma już localfile dla Security, System i Application: usuń je tam, inaczej kanały zbierają się podwójnie, a filtry z tego pliku nie działają -->"];
   for(const c of winSpecFor(prof, extraSec)){
     if(c.c) o.push("<!-- " + c.c + " -->");
     let q = wzQuery(c.v);
@@ -4597,7 +5171,8 @@ function elIds(v){ return v.w ? v.w.join(", ") : v.b.map(i=>"-"+i).join(", "); }
 function winElastic(prof, extraSec){
   const o = ["# winlogbeat.yml (Winlogbeat 8.x). Alternatywa: Elastic Agent z integracjami Windows, System i Sysmon.",
     "# Windows ogranicza zapytanie do ok. 21-22 warunków: dłuższe listy event_id dzielimy po 20 na pozycje z unikalnym id.",
-    ...(prof==="min" ? ["# Profil Minimum: brak Sysmona? Dopisz 4688 do event_id kanału Security."] : []), "winlogbeat.event_logs:"];
+    "# Zasada: Sysmon filtruje sysmonconfig.xml, Security polityka audytu + wykluczenie szumu, kanały głośne: lista ID.",
+    ...(prof==="min" ? ["# Profil Minimum: 4688 wycięte (procesy z Sysmona). Bez Sysmona usuń -4688 z kanału Security."] : []), "winlogbeat.event_logs:"];
   for(const c of winSpecFor(prof, extraSec)){
     if(c.c) o.push("  # " + c.c);
     const opt = c.opt && prof!=="max";
@@ -4636,7 +5211,7 @@ reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"
 # Log Security: 1 GB bufora lokalnie
 wevtutil sl Security /ms:1073741824
 
-# Sysmon (zalecany także w profilu Minimum; forwarder zbiera z niego tylko zdarzenia P1)
+# Sysmon z konfiguracją z tego pakietu (host/sysmonconfig.xml, profil Minimum: tylko zdarzenia P1)
 sysmon64.exe -accepteula -i sysmonconfig.xml
 
 Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -NoRestart
@@ -4731,6 +5306,9 @@ const LIN_AUDIT_MAX = LIN_AUDIT.replace("-b 8192", "-b 16384").replace(/## po te
 -a always,exit -F arch=b64 -S ptrace -k ptrace
 -a always,exit -F arch=b64 -S sethostname,setdomainname -k system_locale
 
+## ładowanie programów eBPF (rootkity eBPF); na hostach z częstymi startami usług może być głośne
+-a always,exit -F arch=b64 -S bpf -k bpf
+
 ## połączenia wychodzące procesów użytkowników (bardzo duży wolumen: tylko na hostach T0 / bastionach)
 # -a always,exit -F arch=b64 -S connect -F auid>=1000 -F auid!=unset -F success=1 -k net_connect
 
@@ -4770,7 +5348,9 @@ const LIN_FILES = [
 ];
 const LIN_TA = [["package.sh","package",["rec","max"]],["openPorts.sh","openPorts",["rec","max"]],["usersWithLoginPrivs.sh","usersWithLoginPrivs",["max"]],["sshdChecker.sh","Unix:SSHDConfig",["max"]],["lastlog.sh","lastlog",["max"]],["update.sh","Unix:Update",["max"]]];
 function linSplunk(prof){
-  const o = ["# Splunk UF: etc/apps/org_linux_base/local/inputs.conf", prof==="min" ? "# Po stronie wyszukiwania: Splunk Add-on for Unix and Linux (Splunk_TA_nix)" : "# Splunk_TA_nix: na wyszukiwaniu ORAZ na UF (skrypty inwentaryzacji uruchamiają się z $SPLUNK_HOME/etc/apps/Splunk_TA_nix/bin)", ""];
+  const o = ["# Splunk UF: etc/apps/org_linux_base/local/inputs.conf",
+    "# Zasada: co powstaje, decydują reguły auditd (host/50-siem.rules) i PAM/rsyslog; tu monitorujesz konkretne pliki bez list.",
+    "# Resztkowy szum (sesje cron) wycinasz w rsyslog albo nullQueue na Heavy Forwarderze, nie na UF.", prof==="min" ? "# Po stronie wyszukiwania: Splunk Add-on for Unix and Linux (Splunk_TA_nix)" : "# Splunk_TA_nix: na wyszukiwaniu ORAZ na UF (skrypty inwentaryzacji uruchamiają się z $SPLUNK_HOME/etc/apps/Splunk_TA_nix/bin)", ""];
   for(const [p,st,,pr] of LIN_FILES) if(pr.includes(prof)) o.push(`[monitor://${p}]`, "disabled = 0", "index = linux", "sourcetype = " + st, "");
   const ta = LIN_TA.filter(x=>x[2].includes(prof));
   if(ta.length){ o.push("# Inwentaryzacja (skrypty z Splunk_TA_nix), raz na dobę"); for(const [s,st] of ta) o.push(`[script://$SPLUNK_HOME/etc/apps/Splunk_TA_nix/bin/${s}]`, "disabled = 0", "interval = 86400", "index = linux", "sourcetype = " + st, ""); }
@@ -4821,11 +5401,12 @@ KB.win.base.cfg = winGen("rec", []); KB.wks.base.cfg = winGen("rec", []); KB.lin
 KB.win.roles.dc.cfgP = {
  min:{dev: KB.win.roles.dc.cfg.dev.replace(/\n# Diagnostyka LDAP[\s\S]*?\n\n/, "\n# Minimum: bez diagnostyki LDAP (1644/2889 zbiera profil Zalecany i Maksymalny)\n\n"),
   splunk:R`# --- rola: kontroler domeny (Minimum) ---
-# Zdarzenia Kerberos/DS/DCSync są dopisane do whitelisty Security. 4662: tylko operacje replikacji (DCSync).
+# Security zbierane z blacklistą szumu (podstawa), więc zdarzenia Kerberos i katalogu wchodzą bez dopisywania.
+# 4662: zostaw tylko operacje replikacji (DCSync).
 [WinEventLog://Security]
 blacklist1 = $XmlRegex="(?i)<EventID>4662</EventID>(?![\s\S]*(1131f6aa-9c07-11d1-f79f-00c04fc2dcd2|1131f6ad-9c07-11d1-f79f-00c04fc2dcd2|89e95b76-444d-4c62-991a-0facbeda640c))"
 `, wazuh: KB.win.roles.dc.cfg.wazuh.replace(/<localfile>[\s\S]*<\/localfile>\n/, ""),
-  elastic:"  # rola: kontroler domeny (Minimum): zdarzenia DC są w event_id kanału Security; 4662 filtruj w ingest pipeline (GUID replikacji)\n"},
+  elastic:"  # rola: kontroler domeny (Minimum): zdarzenia DC wchodzą z kanałem Security; 4662 filtruj w ingest pipeline (GUID replikacji)\n"},
  max:{splunk:R`# --- rola: kontroler domeny (Maksymalny) ---
 # 4662: tylko operacje replikacji (DCSync); pełne 4662 na DC to setki GB dziennie
 [WinEventLog://Security]
@@ -4898,7 +5479,7 @@ end
 KB.pan.base.cfgP = {
  min:{dev:R`PAN-OS (GUI) — profil Minimum:
   1. Device → Server Profiles → Syslog → Add
-     Name: SIEM   Server: 10.10.1.5   Transport: TCP (albo SSL)   Port: 514   Format: BSD/IETF
+     Name: SIEM   Server: 10.10.1.5   Transport: TCP, Port: 514 (albo SSL, Port: 6514)   Format: BSD/IETF
   2. Device → Log Settings: System (severity >= medium), Configuration, GlobalProtect
      → Syslog: SIEM
   3. Objects → Log Forwarding → „default”: Threat (severity >= medium), WildFire (malicious, phishing, grayware), URL (tylko block), Auth
@@ -4924,6 +5505,179 @@ function profNote(t, roles, prof){
   return {keep:its, drop:[], extra, text:`Profil Maksymalny: zbieraj wszystkie pozycje (${its.length}), także ${extra.length} dodatkowych poza profilem Zalecanym. Na urządzeniu włącz pełne kategorie audytu i poziom informational (nie debug).`};
 }
 function hasVariant(t, roles, prof){ return layersOf(t, roles).some(l=>l.L.gen || (l.L.cfgP && l.L.cfgP[prof])); }
+/* ---------- Sysmon, pliki dodatkowe i zasady filtrowania ---------- */
+
+/* ===== generator sysmonconfig.xml (Sysmon 15, schema 4.90) ===== */
+const SYSMON_AGENTS = ["C:\\Program Files\\SplunkUniversalForwarder\\bin\\", "C:\\Program Files (x86)\\ossec-agent\\", "C:\\Program Files\\Elastic\\"];
+const SYSMON_DEF = "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\";
+function sysmonXml(prof){
+  const P = PROFILES[prof].name;
+  const o = [`<!-- SIEMMap: konfiguracja Sysmona, profil ${P}. To tutaj wycinasz szum: niechciane zdarzenia w ogóle nie powstają.
+     Instalacja: sysmon64.exe -accepteula -i sysmonconfig.xml    Zmiana: sysmon64.exe -c sysmonconfig.xml
+     Punkt wyjścia do dopasowania: przetestuj na kilku hostach (wolumen i fałszywe wykluczenia) przed całą flotą.
+     Wykluczenia po ścieżce obrazu dotyczą agentów SIEM/AV: przy innych ścieżkach instalacji popraw je. -->`,
+    `<Sysmon schemaversion="4.90">`, "  <HashAlgorithms>SHA256,IMPHASH</HashAlgorithms>", "  <CheckRevocation>False</CheckRevocation>", "  <DnsLookup>False</DnsLookup>", "  <EventFiltering>"];
+  const grp = (type, onmatch, lines, note) => { if(note) o.push(`    <!-- ${note} -->`); o.push(`    <RuleGroup name="" groupRelation="or">`, `      <${type} onmatch="${onmatch}"${lines.length?">":"/>"}`); if(lines.length){ lines.forEach(l=>o.push("        "+l)); o.push(`      </${type}>`); } o.push("    </RuleGroup>"); };
+  const el = (f, c, v) => `<${f} condition="${c}">${v}</${f}>`;
+  const and = (...xs) => [`<Rule groupRelation="and">`, ...xs.map(x=>"  "+x), `</Rule>`];
+  // agenci SIEM i tylko MsMpEng.exe z Defendera (MpCmdRun.exe z tego folderu to LOLBin, nie wykluczamy)
+  const agents = f => [...SYSMON_AGENTS.map(p=>el(f,"begin with",p)), ...and(el(f,"begin with",SYSMON_DEF), el(f,"end with","\\MsMpEng.exe"))];
+  const lolbins = ["powershell.exe","pwsh.exe","rundll32.exe","regsvr32.exe","mshta.exe","certutil.exe","bitsadmin.exe","msbuild.exe","cscript.exe","wscript.exe","cmd.exe","wmic.exe","installutil.exe","regasm.exe","regsvcs.exe","msiexec.exe","curl.exe"];
+  const userDirs = ["C:\\Users\\", "C:\\ProgramData\\", "C:\\Windows\\Temp\\", "C:\\PerfLogs\\"];
+  // 1 ProcessCreate
+  grp("ProcessCreate","exclude",[...agents("Image"), ...and(el("Image","is",R`C:\Windows\System32\conhost.exe`), el("CommandLine","contains","0xffffffff -ForceV1"))], "EID 1: wszystkie procesy poza agentami SIEM/AV");
+  // 2 FileCreateTime
+  if(prof==="min") grp("FileCreateTime","include",[], "EID 2: wyłączone w Minimum");
+  else { grp("FileCreateTime","include",[".exe",".dll",".sys",".ps1",".bat",".vbs"].map(x=>el("TargetFilename","end with",x)), "EID 2: zmiana czasu utworzenia plików wykonywalnych (timestomping)");
+    grp("FileCreateTime","exclude",[el("Image","begin with","C:\\Windows\\servicing\\"), el("Image","begin with","C:\\Windows\\WinSxS\\"), el("Image","is",R`C:\Windows\System32\msiexec.exe`), ...agents("Image")]); }
+  // 3 NetworkConnect
+  if(prof==="min") grp("NetworkConnect","include",[], "EID 3: wyłączone w Minimum (ruch masz z firewalla)");
+  else if(prof==="rec") grp("NetworkConnect","include",[...userDirs.map(p=>el("Image","begin with",p)), ...lolbins.map(b=>el("Image","end with","\\"+b))], "EID 3: połączenia procesów z katalogów zapisywalnych i LOLBins");
+  else grp("NetworkConnect","exclude",[...agents("Image"), el("DestinationIp","is","127.0.0.1"), el("DestinationIp","is","::1")], "EID 3: wszystkie połączenia poza agentami i pętlą zwrotną (duży wolumen)");
+  // 5 ProcessTerminate
+  grp("ProcessTerminate", prof==="max" ? "exclude" : "include", [], prof==="max" ? "EID 5: wszystkie zakończenia procesów" : "EID 5: wyłączone");
+  // 6 DriverLoad
+  grp("DriverLoad","exclude",and(el("Signature","is","Microsoft Windows"), el("SignatureStatus","is","Valid")), "EID 6: sterowniki poza podpisanymi przez Microsoft Windows (także WHQL firm trzecich: BYOVD)");
+  // 7 ImageLoad
+  if(prof==="max") grp("ImageLoad","include",[R`\System.Management.Automation.dll`, R`\System.Management.Automation.ni.dll`, R`\dbghelp.dll`, R`\dbgcore.dll`, R`\vaultcli.dll`, R`\samlib.dll`, R`\clr.dll`].map(x=>el("ImageLoaded","end with",x)), "EID 7: tylko biblioteki wskazujące na PowerShell w obcym procesie, zrzuty pamięci i odczyt sejfu");
+  else grp("ImageLoad","include",[], "EID 7: wyłączone (bardzo duży wolumen)");
+  // 8 CreateRemoteThread
+  grp("CreateRemoteThread","exclude",[el("StartFunction","is","EtwpNotificationThread")], "EID 8: wstrzykiwanie wątków, bez znanego szumu ETW");
+  // 9 RawAccessRead
+  grp("RawAccessRead", prof==="max" ? "exclude" : "include", [], prof==="max" ? "EID 9: bezpośredni odczyt dysku (kradzież NTDS.dit)" : "EID 9: wyłączone");
+  // 10 ProcessAccess
+  const pa = [R`\lsass.exe`].concat(prof==="max" ? [R`\winlogon.exe`] : []);
+  grp("ProcessAccess","include",pa.map(x=>el("TargetImage","end with",x)), "EID 10: dostęp do LSASS");
+  grp("ProcessAccess","exclude",[...agents("SourceImage"), el("GrantedAccess","is","0x1000"), el("SourceImage","is",R`C:\Windows\System32\wbem\WmiPrvSE.exe`)]);
+  // 11 FileCreate
+  if(prof==="min") grp("FileCreate","include",[el("TargetFilename","contains","\\Start Menu\\Programs\\Startup\\")], "EID 11: tylko folder Autostart");
+  else { const fc = [el("TargetFilename","contains","\\Start Menu\\Programs\\Startup\\"), el("TargetFilename","contains","\\Windows\\System32\\Tasks\\"),
+      ...[".hta",".ps1",".vbs",".vbe",".jse",".bat",".cmd",".scr",".sys"].map(x=>el("TargetFilename","end with",x)),
+      ...and(el("TargetFilename","contains","\\Temp\\"), el("TargetFilename","end with",".exe")), ...and(el("TargetFilename","contains","\\Temp\\"), el("TargetFilename","end with",".dll"))];
+    if(prof==="max") fc.push(...[".iso",".img",".vhd",".vhdx",".zip",".7z",".rar"].map(x=>el("TargetFilename","end with",x)),
+      ...and(el("TargetFilename","begin with","C:\\Users\\"), el("TargetFilename","end with",".exe")), ...and(el("TargetFilename","begin with","C:\\ProgramData\\"), el("TargetFilename","end with",".exe")));
+    grp("FileCreate","include",fc, prof==="max" ? "EID 11: skrypty, pliki wykonywalne w katalogach zapisywalnych, obrazy dysków i archiwa" : "EID 11: autostart, zadania, skrypty i pliki wykonywalne w Temp");
+    grp("FileCreate","exclude",agents("Image")); }
+  // 12-14 RegistryEvent
+  const reg = [R`\CurrentVersion\Run`, R`\CurrentVersion\Policies\Explorer\Run`, "\\Image File Execution Options\\", R`\Winlogon\Userinit`, R`\Winlogon\Shell`,
+    R`\Control\Lsa\Security Packages`, R`\Control\Lsa\Notification Packages`, R`\Control\Lsa\Authentication Packages`, R`\Control\Lsa\RunAsPPL`, R`\Control\Lsa\DisableRestrictedAdmin`, R`\SecurityProviders\WDigest\UseLogonCredential`,
+    R`\AppInit_DLLs`, "\\Microsoft\\Windows Defender\\Exclusions\\", R`\Terminal Server\fDenyTSConnections`, "\\Control\\SafeBoot\\", R`\Environment\UserInitMprLogonScript`];
+  const regRules = reg.map(x=>el("TargetObject","contains",x)).concat(and(el("TargetObject","contains","\\Services\\"), el("TargetObject","end with",R`\ImagePath`)));
+  if(prof==="max") regRules.push(el("TargetObject","contains","\\InprocServer32\\"), el("TargetObject","contains","\\Office\\"), el("TargetObject","contains","\\Netsh\\"));
+  grp("RegistryEvent","include",regRules, "EID 12-14: klucze trwałości, ochrony poświadczeń i wykluczeń Defendera");
+  // 15 FileCreateStreamHash
+  if(prof==="max") grp("FileCreateStreamHash","include",[".exe",".dll",".ps1",".hta",".vbs",".iso",".zip"].map(x=>el("TargetFilename","end with",x)), "EID 15: znacznik pobrania (Zone.Identifier) dla plików ryzykownych");
+  else grp("FileCreateStreamHash","include",[], "EID 15: wyłączone");
+  // 17-18 PipeEvent
+  if(prof==="max") grp("PipeEvent","exclude",[el("PipeName","is",R`\sql\query`), el("PipeName","begin with","\\Winsock2\\"), el("PipeName","begin with","\\SQLLocal\\")], "EID 17-18: wszystkie nazwane potoki poza szumem SQL i Winsock");
+  else grp("PipeEvent","include",[R`\msagent_`, R`\postex_`, R`\status_`, R`\MSSE-`, R`\PSEXESVC`, R`\RemCom`, R`\PAExec`, R`\isapi_http`, R`\lsadump`, R`\cachedump`].map(x=>el("PipeName","begin with",x)), "EID 17-18: nazwy potoków narzędzi ataku i zdalnego wykonania");
+  // 19-21 WmiEvent
+  grp("WmiEvent","exclude",[], "EID 19-21: trwałe subskrypcje WMI (mały wolumen)");
+  // 22 DnsQuery
+  if(prof==="min") grp("DnsQuery","include",[], "EID 22: wyłączone w Minimum (DNS z serwerów DNS albo firewalla)");
+  else grp("DnsQuery","exclude",[".microsoft.com",".windowsupdate.com",".windows.com",".office.com",".office365.com",".msftncsi.com",".digicert.com"].map(x=>el("QueryName","end with",x)).concat(agents("Image")), "EID 22: zapytania DNS poza domenami aktualizacji Microsoft (domeny wewnętrznej nie wykluczamy: rekonesans i rekordy dodane przez atakującego)");
+  // 24 ClipboardChange
+  grp("ClipboardChange","include",[], "EID 24: wyłączone (RODO, hasła w schowku)");
+  // 25 ProcessTampering
+  grp("ProcessTampering","exclude",[], "EID 25: process hollowing i herpaderping");
+  // 26 FileDeleteDetected, 29 FileExecutableDetected
+  if(prof==="max"){ grp("FileDeleteDetected","include",[".ps1",".vbs",".hta",".bat",".cmd"].map(x=>el("TargetFilename","end with",x)), "EID 26: usuwanie skryptów (sprzątanie po ataku), bez archiwizacji plików");
+    grp("FileExecutableDetected","include",userDirs.map(p=>el("TargetFilename","begin with",p)), "EID 29: nowe pliki PE w katalogach zapisywalnych"); }
+  o.push("  </EventFiltering>", "</Sysmon>");
+  return o.join("\n") + "\n";
+}
+
+/* ===== pliki dodatkowe w pakiecie ===== */
+KB.win.base.extra = prof => [{k:"dev", name:"host/sysmonconfig.xml", label:"sysmonconfig.xml", data:sysmonXml(prof)}];
+KB.wks.base.extra = KB.win.base.extra;
+KB.lin.base.extra = prof => [{k:"dev", name:"host/50-siem.rules", label:"50-siem.rules (auditd)", data: prof==="min" ? LIN_AUDIT_MIN : prof==="max" ? LIN_AUDIT_MAX : LIN_AUDIT}];
+
+/* ===== Gdzie filtrować: [co, gdzie, jak, regex dla nullQueue (opcjonalnie)] ===== */
+const FL = {SRC:"Źródło (urządzenie / host)", AGENT:"Konfiguracja na hoście (Sysmon, auditd, polityka audytu)", UF:"Splunk UF: inputs.conf", RELAY:"Relay syslog / SC4S", HF:"Splunk HF / indekser: nullQueue", API:"Konektor / API (filtr zapytania)", NONE:"Nie filtruj"};
+const NETX = (dev) => [["Poziom logowania","SRC",`Ustaw na urządzeniu poziom informational (6) albo notifications (5) w profilu Minimum. Nigdy debug. Tak odcinasz szum bez kosztu sieci i relaya.`],
+  ["Kategorie i wiadomości bez wartości","SRC",`Wyłącz na urządzeniu (logging discriminator, facility, filtry kategorii), jeśli platforma to pozwala.`],
+  ["Resztkowy szum, którego nie wyłączysz na urządzeniu","HF",`Transformacja nullQueue na Heavy Forwarderze lub indekserze. UF czytający plik z relaya nie filtruje po treści.`]];
+const FLT = {
+ win:[["Sysmon (EID 1-29)","AGENT","Reguły include/exclude w sysmonconfig.xml. W inputs.conf sam kanał, bez whitelisty i blacklisty."],
+  ["Security","AGENT","O tym, co powstaje, decyduje polityka audytu w GPO (podkategorie, SACL). W inputs.conf tylko blacklista znanego szumu: 4634, 4627, 4656, 4658, 4690, 4703, 5156–5158, 4673, 4674, 5379."],
+  ["System, Application, PowerShell, TaskScheduler, WinRM, Defender, TS","UF","Kanały głośne z kilkoma przydatnymi ID: whitelista konkretnych Event ID w inputs.conf."],
+  ["LAPS, SMB Security, LSA, NTLM, OpenSSH","NONE","Małe kanały o wysokiej wartości: zbieraj w całości."],
+  ["Pole Message / tekst opisu","UF","renderXml = true (albo suppress_text = 1): krótsze zdarzenia, stabilne pola."],
+  ["4662 na kontrolerach domeny","UF","blacklist1 z $XmlRegex: zostają tylko operacje replikacji (DCSync). Zakres generowania ogranicza SACL na obiektach."]],
+ wks:[["Sysmon","AGENT","sysmonconfig.xml z wykluczeniami dla przeglądarek, aktualizatorów i agentów. inputs.conf bez list."],
+  ["Security","AGENT","Polityka audytu w GPO dla stacji. Blacklista szumu w inputs.conf jak na serwerach."],
+  ["Kanały głośne","UF","Whitelista Event ID (System, PowerShell, Defender, TaskScheduler)."],
+  ["Telemetria EDR","API","Jeśli masz EDR z pełną telemetrią, nie duplikuj jej Sysmonem na wszystkich stacjach: Sysmon na PAW i stacjach administratorów."]],
+ mac:[["Unified Log","AGENT","Predykat w log stream / konfiguracji agenta (np. subsystem com.apple.securityd, process sudo): cały Unified Log to setki MB na godzinę."],
+  ["Endpoint Security Framework","AGENT","Wybierz typy zdarzeń ESF w agencie (exec, authentication, xprotect), a nie wszystkie."],
+  ["Pliki /var/log","UF","Monitoruj konkretne pliki (install.log, system.log), bez wildcardów na cały katalog."]],
+ lin:[["auditd","AGENT","O tym, co powstaje, decydują reguły auditd (50-siem.rules). Wykluczenia (-a never,exit) przed regułami ogólnymi, execve tylko dla auid interaktywnych."],
+  ["auth.log / secure, audit.log","UF","Monitoruj konkretne pliki, bez list: zakres ustalił auditd i PAM."],
+  ["Sesje cron w auth.log","SRC","rsyslog: odrzuć pam_unix(cron:session) u źródła albo na HF (nullQueue).","pam_unix\\(cron:session\\)"],
+  ["journald","AGENT","Zbieraj wybrane jednostki (sshd, sudo, systemd-logind), nie cały dziennik."],
+  ["Metryki (cpu, vmstat, top)","NONE","Nie do SIEM: monitoring (Zabbix, Prometheus)."]],
+ legacy:[["IBM i: QAUDJRN","SRC","Zakres ustala QAUDLVL/QAUDCTL: *AUTFAIL, *SECURITY, *SERVICE, *CREATE, *DELETE (bez *PGMADP dla wszystkich)."],
+  ["z/OS: SMF","SRC","Wybierz typy rekordów SMF (80 RACF, 30 zadania, 119 TCP) w SMFPRMxx albo w konektorze."],
+  ["AIX/Solaris","AGENT","Klasy audytu w /etc/security/audit/config (AIX) lub audit_control (Solaris), nie wszystkie."]],
+ cisco:NETX("cisco").concat([["LINK/LINEPROTO na portach dostępowych","SRC","no logging event link-status na interfejsach dostępowych.","%LINEPROTO-5-UPDOWN|%LINK-3-UPDOWN"],["ACL log per pakiet","SRC","Słowo log tylko na ACL zarządzania (deny), nie na regułach ruchu użytkowników. Nie wycinaj %SEC-6-IPACCESSLOGP na HF, bo zniknęłyby też odmowy do zarządzania."]]),
+ hp:NETX("hp").concat([["Zdarzenia portów (link up/down)","SRC","ArubaOS-CX: logging filter / Comware: info-center source z niższym poziomem dla modułów portów.","(?i)port \\S+ is (now )?(on-line|off-line|up|down)"]]),
+ mt:[["Tematy logowania","SRC","/system logging: tylko potrzebne tematy (account, system,info, critical). Bez debug i !packet dla ipsec."],
+  ["Firewall","SRC","log=yes tylko na regułach drop w input i wybranych forward."],
+  ["Resztkowy szum DHCP/wireless","HF","nullQueue na HF, jeśli nie wyłączysz tematu.","dhcp,info|wireless,info.*(connected|disconnected)"]],
+ netx:NETX("netx"),
+ sdwan:[["Zdarzenia Meraki/vManage","API","Wybierz typy zdarzeń w konsoli (security, config, VPN) albo filtr w wejściu API."],["Flows","SRC","Flow logs tylko dla ruchu między strefami, nie całość."]],
+ ddi:[["Zapytania DNS","SRC","Query logging tylko tam, gdzie nie masz DNS Security/RPZ z firewalla. Najlepiej zapytania do domen RPZ i odmowy."],
+  ["DHCP","SRC","Zostaw nowe dzierżawy i konflikty; odnowienia ogranicz w ustawieniach logowania serwera DHCP, a nie prostym regexem (ten sam komunikat opisuje nową dzierżawę)."]],
+ ubnt:[["Kategorie w konsoli","SRC","UniFi: tylko Admin Activity, Security Detections, Device, Triggers. Clients i Traffic tylko przy detekcjach."],
+  ["Traffic logging","SRC","Syslog Logging tylko na politykach block."],
+  ["Roaming i sesje klientów","HF","nullQueue, jeśli nie wyłączysz kategorii Clients.","(?i)roam|client (dis)?connected"]],
+ wlan:[["Poziom i kategorie kontrolera","SRC","Security, admin, rogue/WIDS. Bez asocjacji klientów."],["Asocjacje klientów","SRC","Wyłącz kategorię asocjacji i roamingu na kontrolerze. Nie wycinaj regexem na HF: te same słowa występują w alertach rogue AP i WIDS."]],
+ pan:[["Traffic","SRC","Log at Session End na regułach, Log at Session Start = off; bez logowania na regułach infrastruktury (backup, replikacja) i drop-all z Internetu."],
+  ["Typy logów","SRC","Profil Log Forwarding z filtrami: threat, system, config, auth, globalprotect w całości; traffic wybiórczo."],
+  ["URL","SRC","Kategorie niekrytyczne: allow bez logowania; logowanie kontenerów stron wyłączone."],
+  ["Resztkowy szum traffic","SRC","Wyłącz logowanie na regule drop-all strefy untrust zamiast wycinać na HF: prosty regex (np. incomplete) usunąłby też sesje wewnętrzne."]],
+ forti:[["Traffic","SRC","config log syslogd filter: forward-traffic tylko tam, gdzie potrzebny; local-traffic w profilu Maksymalnym."],["Poziom","SRC","severity information; bez debug."],["Implicit deny","SRC","fwpolicy-implicit-log tylko w Maksymalnym."]],
+ asa:[["Komunikaty per połączenie","SRC","no logging message 302013/302014/302015/302016 (budowa i zamknięcie połączeń), jeśli nie potrzebujesz pełnego ruchu.","%ASA-6-30201[3-6]"],["Poziom","SRC","logging trap informational; komunikaty adminów 111008/111009 podnieś do poziomu 5."]],
+ fwx:[["Reguły accept","SRC","Logowanie tylko na drop i na granicach stref (Check Point: Track = Log tylko na wybranych regułach)."],["Log Exporter / syslog","SRC","Filtr typów logów w Log Exporter (Check Point) albo w Remote Syslog (Sophos UTM: wybór logów)."],["Resztkowy szum","SRC","Wyłącz logowanie na regułach infrastruktury (NTP, DNS do własnych resolverów) w polityce. Nie wycinaj całego ruchu 53/123 na HF: ukryłoby tunelowanie DNS i połączenia do obcych resolverów."]],
+ adc:[["Logi dostępu","SRC","Request logging tylko dla aplikacji publikowanych na zewnątrz; health monitory wyłączone z logów.","(?i)health.?check"],["Audyt administracyjny","NONE","Zbieraj w całości (mały wolumen)."]],
+ proxy:[["Obiekty stron","SRC","Loguj żądania główne, a nie każdy obiekt (obrazy, CSS) tam, gdzie SWG na to pozwala."],["Kategorie dozwolone","HF","nullQueue dla kategorii niekrytycznych przy dużym wolumenie; blokady i kategorie ryzykowne zostaw.","(?i)category=\"?(news|shopping|streaming)"]],
+ nac:[["Accounting RADIUS (Interim-Update)","SRC","Wyłącz interim updates albo wydłuż interwał; zostaw Start/Stop."],["Udane uwierzytelnienia 802.1X","HF","nullQueue dla sukcesów przy bardzo dużej liczbie stacji; porażki zostaw.","(?i)(Passed-Authentication|Access-Accept)"]],
+ mailgw:[["Werdykty spam/bulk","SRC","Wysyłaj phish, malware, spoofing, kwarantannę; bulk i newsletter bez logowania albo do osobnego indeksu."],["Treść wiadomości","NONE","Nigdy do SIEM: tylko metadane i hashe."]],
+ cdn:[["Logi żądań HTTP","API","Logpush/stream z filtrem: odrzucone przez WAF, błędy 4xx/5xx na logowaniu, bez całego ruchu statycznego."]],
+ vmw:[["hostd/vpxa verbose","SRC","Config.HostAgent.log.level i Vpx.Vpxa.config.log.level = info na hoście."],
+  ["vmkernel storage (NMP, ScsiDeviceIO)","RELAY","Odrzuć na relayu/SC4S albo nullQueue na HF.","(?i)(nmp_|ScsiDeviceIO|NMP:)"],
+  ["vCenter","SRC","Do syslog strumień zdarzeń vim.event.* i logi SSO; pełny vpxd.log tylko przy diagnozie."],
+  ["dfwpktlogs NSX","SRC","Logging tylko na regułach drop i do stref T0."]],
+ virt:[["Proxmox / Nutanix","SRC","Zbieraj audyt API i logowania; metryki do monitoringu."]],
+ bmc:[["Kategorie alertów","SRC","iDRAC: eventfilters dla Audit i Configuration oraz krytycznych System; bez Informational czujników. iLO: Authentication Failure Logging na każdą porażkę."],["Czujniki","NONE","Nie do SIEM (monitoring sprzętu)."]],
+ bkp:[["Zdarzenia zadań","SRC","Veeam: zdarzenia sesji i zmian konfiguracji; bez szczegółów każdego pliku kopii."],["Logi debug agentów","NONE","Nie do SIEM."]],
+ hsm:[["Audyt HSM","NONE","Mały wolumen, pełna wartość: zbieraj w całości."]],
+ datastore:[["Audyt baz","AGENT","Polityka audytu w bazie (Unified Auditing, audit plugin): logowania, DDL, uprawnienia; SELECT tylko na tabelach wrażliwych."],["Logi zapytań (general log)","NONE","Nie włączaj na produkcji do SIEM."]],
+ bizapp:[["SAP SAL","AGENT","Filtry w RSAU_CONFIG: logowania wszystkich, pełny zakres tylko dla kont uprzywilejowanych i transakcji krytycznych."],["HANA","AGENT","Polityki audytu według grup akcji; SELECT tylko dla tabel z danymi osobowymi."],["Aplikacje (Jira, CRM)","API","Filtr w zapytaniu API: audyt administracyjny i eksporty, bez odsłon stron."]],
+ cloud:[["Entra ID","API","Diagnostic settings: wybór kategorii (bez NonInteractive w pełnej retencji, jeśli licencja boli); filtr po stronie odbiorcy dla odnowień tokenów."],["M365 UAL","API","Wybór subskrypcji Management Activity API. Audit.General zawiera m.in. Teams, Defender for Office 365, eDiscovery i Power Platform: włącz, jeśli używasz tych usług."],["Defender XDR","API","Alerty i incydenty przez Graph; Streaming API tylko z wybranymi tabelami."]],
+ iaas:[["CloudTrail / Activity Log","API","Management events w całości; data events (S3, Lambda) tylko dla zasobów z danymi wrażliwymi."],["VPC/NSG Flow Logs","SRC","Tylko podsieci z danymi i granice; próbkowanie albo agregacja."]],
+ devsec:[["Audyt platform","API","Audit events (GitLab, GitHub, Vault) w całości: mały wolumen. Logi pipeline'ów i buildów poza SIEM."]],
+ vdi:[["Broker i gateway","SRC","Logowania, sesje, zmiany konfiguracji; bez metryk wydajności sesji."]],
+ mft:[["Transfery","NONE","Każdy transfer ma wartość (wyciek, MOVEit): zbieraj w całości."]],
+ itsec:[["Narzędzia SOC","API","Audyt administracyjny narzędzi; wyniki skanów jako osobny indeks lub lookup, nie surowe logi."]],
+ voip:[["CDR","SRC","CDR do systemu billingowego; do SIEM zdarzenia bezpieczeństwa (nieudane rejestracje, toll fraud)."]],
+ ot:[["Sonda OT","SRC","Do SIEM alerty i zmiany (program PLC, nowe urządzenia), nie cały ruch przemysłowy."]],
+ phys:[["SKD i CCTV","SRC","Odmowy dostępu, alarmy, zmiany uprawnień; bez każdego przejścia przez drzwi, jeśli nie ma use case."]],
+ facility:[["UPS, BMS","SRC","Alarmy i zmiany konfiguracji; pomiary do monitoringu."]],
+ iot:[["IoT","SRC","Logowania administracyjne i zmiany konfiguracji; telemetria poza SIEM."]],
+ mfp:[["Drukarki","SRC","Logowania do panelu admin i zmiany konfiguracji; dziennik zadań wydruku tylko przy DLP."]],
+ other:NETX("other")
+};
+function fltRows(t){ return (FLT[t]||[]).map(r=>({co:r[0], gdzie:FL[r[1]]||r[1], key:r[1], jak:r[2], rx:r[3]||""})); }
+function splunkNullQueue(t, roles){
+  const rows = fltRows(t).filter(r=>r.rx); if(!rows.length) return "";
+  const sp = composeRaw(t, roles||[], "splunk", "rec"); const st = (sp.match(/sourcetype = (\S+)/)||[])[1]; if(!st) return "";
+  const name = "siemmap_null_" + t;
+  return ["", "# --- resztkowy szum: Heavy Forwarder albo indekser (UF czytający pliki nie filtruje po treści) ---",
+    "# Najpierw wytnij u źródła (sekcja „Gdzie filtrować” w pakiecie). Poniższe tylko dla tego, czego nie da się wyłączyć.",
+    "# props.conf", `# [${st}]`, `# TRANSFORMS-siemmap_null = ${name}`, "# transforms.conf", `# [${name}]`,
+    `# REGEX = ${rows.map(r=>r.rx).join("|")}`, "# DEST_KEY = queue", "# FORMAT = nullQueue"].join("\n") + "\n";
+}
 /* ===================== APLIKACJA ===================== */
 const $ = (s, r=document) => r.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -5399,16 +6153,18 @@ function composeCfg(t, roles, k, prof){
   let out = composeRaw(t, roles, k, prof);
   if(!out.trim()) return "";
   const fn = KB[t].files[k] || "";
-  if(k==="splunk" && /\.conf$/.test(fn)) out = mergeSplunk(out);
+  if(k==="splunk" && /\.conf$/.test(fn)) out = mergeSplunk(out) + splunkNullQueue(t, roles);
   else if(k==="elastic" && /\.ya?ml$/.test(fn)) out = mergeYaml(out);
   else if(k==="wazuh" && /\.xml$/.test(fn)) out = wazuhParts(t, out, prof).main;
   if(k!=="dev" && out.trim()) out = cfgHeader(t, roles, k, prof) + "\n" + out;
   return out;
 }
+function extraFiles(t, roles, prof){ const f = KB[t].base.extra; return f ? f(prof || U.prof || "rec", roles) : []; }
 function wazuhExtra(t, roles, prof){ if(!/\.xml$/.test(KB[t].files.wazuh||"")) return {rules:"", decoders:""}; const p = wazuhParts(t, composeRaw(t, roles, "wazuh", prof || U.prof || "rec"), prof); return {rules:p.rules, decoders:p.decoders}; }
 function cfgFiles(t, roles, prof){
   const out = [];
   for(const k of CFG_KEYS){ const txt = composeCfg(t, roles, k, prof); if(txt.trim()) out.push({k, name:KB[t].files[k], data:txt}); }
+  for(const e of extraFiles(t, roles, prof)) out.push({k:e.k, name:e.name, data:e.data});
   const x = wazuhExtra(t, roles, prof), dir = (KB[t].files.wazuh||"wazuh/x").split("/").slice(0,-1).join("/") || "wazuh";
   if(x.rules) out.push({k:"wazuh", name:dir+"/local_rules.xml", data:x.rules});
   if(x.decoders) out.push({k:"wazuh", name:dir+"/local_decoder.xml", data:x.decoders});
@@ -5418,6 +6174,12 @@ function profBarHTML(t, roles){
   const its = itemsOf(t, roles); const n = p => its.filter(x=>inProf(x.it,p)).length;
   return `<div class="prof-bar" id="prof-bar"><span class="pl">Profil zbierania</span><div class="seg prof" role="group" aria-label="Profil zbierania">${PROF_KEYS.map(p=>`<button type="button" data-act="prof" data-v="${p}" aria-pressed="${U.prof===p}">${PROFILES[p].name} <span>${n(p)}</span></button>`).join("")}</div>
     <p>${esc(PROFILES[U.prof].desc)}</p></div>`;
+}
+function fltHTML(t){
+  const rows = fltRows(t); if(!rows.length) return "";
+  return `<div class="sec" id="s-flt"><h3>Gdzie filtrować <small>odcinaj szum tam, gdzie powstaje</small></h3>
+    <p class="sec-intro">Kolejność: najpierw źródło (polityka audytu, Sysmon, auditd, poziom logowania urządzenia), potem relay lub konektor, na końcu Splunk. Zdarzenie wycięte u źródła nie obciąża hosta, sieci ani licencji. W Splunku UF filtruje po treści tylko kanały Windows (whitelist/blacklist); pozostały szum usuwa nullQueue na Heavy Forwarderze lub indekserze.</p>
+    <div class="flt">${rows.map(r=>`<div class="fr"><b>${esc(r.co)}</b><span class="fw fw-${esc(r.key)}">${esc(r.gdzie)}</span><span>${esc(r.jak)}${r.rx?` <code>${esc(r.rx)}</code>`:""}</span></div>`).join("")}</div></div>`;
 }
 function pkgTitle(t, roles){ const T=KB[t]; return T.name + (roles.length ? " · " + roleNames(t,roles).join(" + ") : " · tylko podstawa"); }
 function pkgHTML(ctx){
@@ -5435,13 +6197,14 @@ function pkgHTML(ctx){
      <p>${items.length} pozycji (${p1n} P1)${mode==="host"?"":mode==="bulk"?` · stany dla <b>${hosts.length}</b> ${hosts.length===1?"hosta":"hostów"} pasujących do wyboru`:" · brak hostów tego typu w inwentarzu, pakiet w trybie podglądu"}.</p></div>
      <div class="btns"><button class="btn primary" type="button" data-act="pkg-zip">Pobierz pakiet (.zip)</button><button class="btn" type="button" data-act="pkg-md">README (.md)</button></div></div>
    ${profBarHTML(t, roles)}
-   <nav class="pkg-nav" aria-label="Sekcje pakietu"><a href="#s-items">Co logować</a><a href="#s-dont">Czego nie logować</a><a href="#s-tips">Na co zwrócić uwagę</a><a href="#s-cfg">Konfiguracje</a><a href="#s-test">Test po wdrożeniu</a><a href="#s-det">Detekcje</a>${mode==="host"?`<a href="#s-hist">Historia zmian</a>`:""}</nav>
+   <nav class="pkg-nav" aria-label="Sekcje pakietu"><a href="#s-items">Co logować</a><a href="#s-dont">Czego nie logować</a>${(FLT[t]||[]).length?`<a href="#s-flt">Gdzie filtrować</a>`:""}<a href="#s-tips">Na co zwrócić uwagę</a><a href="#s-cfg">Konfiguracje</a><a href="#s-test">Test po wdrożeniu</a><a href="#s-det">Detekcje</a>${mode==="host"?`<a href="#s-hist">Historia zmian</a>`:""}</nav>
    <div class="sec" id="s-items"><h3>Co logować <small>podstawa typu + wybrane role</small></h3>
      <div class="filt"><span class="note">Priorytet:</span>${["","1","2","3"].map(p=>`<button class="rchip" type="button" data-act="pf" data-v="${p}" aria-pressed="${U.pf===p}">${p?"P"+p:"Wszystkie"}</button>`).join("")}
        ${mode==="host"?`<button class="rchip" type="button" data-act="gap-only" aria-pressed="${U.gapOnly}">Tylko niezbierane</button>`:""}</div>
      <div id="pkg-items">${itemsHTML(ctx, L, hosts)}</div></div>
    <div class="sec" id="s-dont"><h3>Czego nie logować lub filtrować u źródła</h3>
      ${dont.length?`<div class="dont">${dont.map(({d})=>`<div class="d"><b>${esc(d[0])}</b><span>${esc(d[1])}</span></div>`).join("")}</div>`:`<p class="sec-intro">Brak specyficznych wykluczeń dla tego wyboru.</p>`}</div>
+   ${fltHTML(t)}
    <div class="sec" id="s-tips"><h3>Na co zwrócić uwagę</h3>
      <div class="tips">${tips.map(({x,l})=>`<div class="tip">${x}<span class="src">${esc(l.isBase?"podstawa":l.name)}</span></div>`).join("")}</div></div>
    <div class="sec" id="s-cfg"><h3>Konfiguracje <small>szablony z możliwością podmiany na własne pliki</small></h3>
@@ -5501,13 +6264,15 @@ function cfgHTML(ctx){
   const tabs = `<div class="tabs" role="tablist">${CFG_KEYS.map(x=>`<button type="button" role="tab" data-act="tab" data-v="${x}" aria-selected="${U.tab===x}">${esc(lbl(x))}</button>`).join("")}</div>`;
   const view = `<div class="seg vsw" role="group" aria-label="Widok"><button type="button" data-act="cfgview" data-v="file" aria-pressed="${U.cfgView==="file"}">Gotowy plik</button><button type="button" data-act="cfgview" data-v="layers" aria-pressed="${U.cfgView==="layers"}">Warstwy${canEdit?" i edycja":""}</button></div>`;
   const wx = k==="wazuh" ? wazuhExtra(t, roles, prof) : {};
-  const bar = `<div class="cfg-bar"><span class="fname">${esc(PROFILES[prof].dir)}/${esc(fname)}</span><span class="btns">${view}<button class="btn sm" type="button" data-act="cfg-copy">Kopiuj</button><button class="btn sm" type="button" data-act="cfg-dl">Pobierz plik</button>${wx.rules?`<button class="btn sm" type="button" data-act="cfg-dl-x" data-v="rules">local_rules.xml</button>`:""}${wx.decoders?`<button class="btn sm" type="button" data-act="cfg-dl-x" data-v="decoders">local_decoder.xml</button>`:""}</span></div>`;
+  const ex = extraFiles(t, roles, prof).map((e,i)=>({...e,i})).filter(e=>e.k===k);
+  const bar = `<div class="cfg-bar"><span class="fname">${esc(PROFILES[prof].dir)}/${esc(fname)}</span><span class="btns">${view}<button class="btn sm" type="button" data-act="cfg-copy">Kopiuj</button><button class="btn sm" type="button" data-act="cfg-dl">Pobierz plik</button>${wx.rules?`<button class="btn sm" type="button" data-act="cfg-dl-x" data-v="rules">local_rules.xml</button>`:""}${wx.decoders?`<button class="btn sm" type="button" data-act="cfg-dl-x" data-v="decoders">local_decoder.xml</button>`:""}${ex.map(e=>`<button class="btn sm" type="button" data-act="cfg-dl-e" data-v="${e.i}">${esc(e.label)}</button>`).join("")}</span></div>`;
   if(U.cfgView==="file"){
     const txt = composeCfg(t, roles, k, prof);
     const cust = L.some(l=>S && S.custom.cfg[l.key] && S.custom.cfg[l.key][k]!=null);
     return tabs + noteHTML + bar + (txt.trim() ? `${cust?`<p class="note"><span class="badge">Zawiera Twoją wersję</span> co najmniej jednej warstwy.</p>`:""}<pre class="code cfg-file">${esc(txt)}</pre>` : `<p class="sec-intro">Brak szablonu dla tej zakładki.</p>`)
       + (wx.rules ? `<div class="cblk"><div class="cblk-h"><span><b>local_rules.xml</b> <span class="note">manager Wazuh</span></span></div><pre class="code">${esc(wx.rules)}</pre></div>` : "")
       + (wx.decoders ? `<div class="cblk"><div class="cblk-h"><span><b>local_decoder.xml</b> <span class="note">manager Wazuh</span></span></div><pre class="code">${esc(wx.decoders)}</pre></div>` : "")
+      + ex.map(e=>`<div class="cblk"><div class="cblk-h"><span><b>${esc(e.label)}</b> <span class="note">${esc(e.name)} · profil ${esc(PROFILES[prof].name)}</span></span></div><pre class="code cfg-file">${esc(e.data)}</pre></div>`).join("")
       + `<p class="note">Gotowy plik łączy podstawę i wybrane role dla profilu <b>${esc(PROFILES[prof].name)}</b>: powtórzone stanze Splunka, klucze YAML i kanały są scalane, reguły i dekodery Wazuh trafiają do osobnych plików managera. Paczka .zip zawiera wszystkie trzy profile.</p>`;
   }
   const blocks = L.map(l=>{
@@ -5538,6 +6303,8 @@ function pkgMarkdown(ctx){
   const cell = s => String(s||"").replace(/\|/g,"\\|");
   for(const x of itemsOf(t,roles)){ const [id,ev,src,p,vol,why,att]=x.it; const fp = PROFILES[PROF_KEYS.find(q=>inProf(x.it,q))].name; md.push(`| P${p} | ${fp} | ${cell(ev)} | ${cell(src)} | ${VOL[vol]||vol} | ${cell(why)} | ${cell(att)} |`+(mode==="host"?` ${ST_LONG[hosts[0].st[x.k]||""]} |`:"")); }
   md.push("", "## Czego nie logować / filtrować u źródła", ""); for(const l of L) for(const d of (l.L.dont||[])) md.push(`- **${d[0]}**: ${d[1]}`);
+  if((FLT[t]||[]).length){ md.push("", "## Gdzie filtrować", "", "Najpierw źródło (polityka audytu, Sysmon, auditd, poziom logowania), potem relay lub konektor, na końcu Splunk (UF: whitelist/blacklist kanałów Windows; HF/indekser: nullQueue).", "", "| Co | Gdzie | Jak |", "|---|---|---|");
+    for(const r of fltRows(t)) md.push(`| ${cell(r.co)} | ${cell(r.gdzie)} | ${cell(r.jak)}${r.rx?" `"+cell(r.rx)+"`":""} |`); }
   md.push("", "## Na co zwrócić uwagę", ""); for(const l of L) for(const x of (l.L.tips||[])) md.push(`- ${stripTags(x)}`);
   md.push("", "## Test po wdrożeniu", ""); for(const l of L) for(const x of (l.L.test||[])) md.push(`### ${x[0]}`, "```", x[1], "```", x[2], "");
   md.push("", "## Detekcje startowe", ""); for(const l of L) for(const x of (l.L.det||[])){ md.push(`### ${x.n} (${x.att||""})`); if(x.spl) md.push("Splunk:","```spl",x.spl,"```"); if(x.kql) md.push("Elastic:","```",x.kql,"```"); if(x.wz) md.push("Wazuh:","```",x.wz,"```"); md.push(""); }
@@ -5579,7 +6346,7 @@ async function pkgZip(ctx){
 function rulesHTML(){
   const P = [
     ["Najpierw tożsamość, potem sieć","Większość incydentów przechodzi przez AD: kradzież poświadczeń, eskalację, lateral movement. DC, Sysmon i PowerShell dają najwięcej detekcji na każdy GB licencji."],
-    ["Filtruj u źródła, nie w SIEM","Licencja i dysk liczą dane w momencie indeksowania. Zdarzenie odrzucone na agencie nic nie kosztuje; zaindeksowane i nieużywane kosztuje co miesiąc."],
+    ["Filtruj tam, gdzie zdarzenie powstaje","Sysmon wycinasz w jego konfiguracji, Security polityką audytu w GPO (plus blacklista znanego szumu w inputs.conf), a kanały głośne whitelistą kilku przydatnych Event ID. Urządzenia sieciowe: poziom i kategorie na urządzeniu. Resztę nullQueue na Heavy Forwarderze. Zdarzenie, które nie powstało, nie obciąża hosta, sieci ani licencji."],
     ["Każde źródło ma właściciela i use case","Dla każdej pozycji znasz indeks, retencję, zgodność z CIM/ECS i co najmniej jedną detekcję lub raport. Źródło bez odbiorcy jest pierwszym kandydatem do wycięcia."],
     ["Pilnuj ciszy, nie tylko alertów","Host, który przestał wysyłać logi, wygląda tak samo jak host bez incydentów. Porównuj inwentarz z tym, co realnie dociera (zapytania niżej)."],
     ["Infrastruktura SIEM to Tier 0","Deployment server, Wazuh manager i Fleet wykonują kod na DC. Administrujesz nimi z PAW T0, a konta SOC nie mają przez nie ścieżki do kontrolerów domeny."],
@@ -6407,6 +7174,7 @@ document.addEventListener("click", async e=>{
     case "cfg-reset": { const l=el.dataset.l; if(S.custom.cfg[l]){ delete S.custom.cfg[l][U.tab]; if(!Object.keys(S.custom.cfg[l]).length) delete S.custom.cfg[l]; } audit("cfg", {o:l}, `przywrócono szablon (${U.tab})`); changed(false); rerenderCfg(); break; }
     case "cfg-copy": copyText(composeCfg(U.ctx.t,U.ctx.roles,U.tab)); break;
     case "cfg-dl": { const f = PROFILES[U.prof].dir + "-" + KB[U.ctx.t].files[U.tab].split("/").pop(); saveFile(dlName(f), composeCfg(U.ctx.t,U.ctx.roles,U.tab)); break; }
+    case "cfg-dl-e": { const e = extraFiles(U.ctx.t,U.ctx.roles,U.prof)[+v]; if(e) saveFile(dlName(PROFILES[U.prof].dir + "-" + e.name.split("/").pop()), e.data); break; }
     case "cfg-dl-x": { const x = wazuhExtra(U.ctx.t,U.ctx.roles,U.prof); saveFile(dlName(PROFILES[U.prof].dir + "-" + (v==="rules"?"local_rules.xml":"local_decoder.xml")), v==="rules"?x.rules:x.decoders); break; }
     case "prof": { U.prof = v; try{ localStorage.setItem("siemmap.prof", v); }catch(e){} const pb=$("#prof-bar"); if(pb && U.ctx) pb.outerHTML = profBarHTML(U.ctx.t, U.ctx.roles); rerenderPkg(); rerenderCfg(); break; }
     case "cfgview": U.cfgView = v; U.edit = null; rerenderCfg(); break;
@@ -6649,5 +7417,3 @@ function offerMigration(){
   renderChip(); offerMigration();
 })();
 </script>
-
-</html>

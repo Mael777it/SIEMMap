@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Licencja MIT" src="https://img.shields.io/badge/licencja-MIT-1D5E6E">
-  <img alt="Wersja" src="https://img.shields.io/badge/wersja-3.6-172226">
+  <img alt="Wersja" src="https://img.shields.io/badge/wersja-3.9-172226">
   <a href="https://github.com/mael777it/SIEMMap"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-mael777it%2FSIEMMap-172226?logo=github"></a>
 </p>
 
@@ -31,11 +31,12 @@
 
 1. **Pierwsze uruchomienie:** na starcie widać dane demonstracyjne. **Utwórz sejf** zakłada konto administratora i szyfrowaną bazę w przeglądarce (AES-256-GCM, klucz konta z PBKDF2-SHA256, 1 000 000 iteracji, losowa sól). Opcjonalnie włączasz **plik klucza** jako drugi czynnik.
 2. **Inwentarz:** wyszukiwarka i filtry dla tysięcy hostów, zaznaczanie zbiorcze, pokrycie P1 i luki dla każdego hosta. Host dodajesz ręcznie albo importem CSV.
-3. **Katalog:** wybierasz **typ urządzenia** (42 typy) i **role** (146), a aplikacja składa pakiet: co logować (635 pozycji z priorytetem P1–P3, wolumenem i MITRE ATT&CK), czego nie logować, na co uważać, test po wdrożeniu i detekcje startowe.
+3. **Katalog:** wybierasz **typ urządzenia** (42 typy) i **role** (155), a aplikacja składa pakiet: co logować (724 pozycji z priorytetem P1–P3, wolumenem i MITRE ATT&CK), czego nie logować, na co uważać, test po wdrożeniu i detekcje startowe.
 4. **Profil zbierania:** *Minimum* (tylko P1), *Zalecany* (P1 + P2 i tanie P3) albo *Maksymalny* (wszystko o wartości detekcyjnej lub śledczej). Profil zmienia listę pozycji i generowane konfiguracje.
-5. **Konfiguracje:** `inputs.conf` (Splunk UF), `agent.conf` + `local_rules.xml` (Wazuh), `winlogbeat.yml` / `filebeat.yml` (Elastic) oraz przygotowanie hosta lub urządzenia (auditpol, auditd, CLI). Widok **Gotowy plik** pokazuje scalony plik dla podstawy i wszystkich wybranych ról. **Pobierz pakiet (.zip)** zawiera README i konfiguracje we wszystkich trzech profilach. Każdą warstwę możesz zastąpić własnym plikiem.
-6. **Stan zbierania:** dla każdej pozycji oznaczasz *Zbierane*, *Częściowo*, *Brak* albo *Nie dotyczy* – na jednym hoście albo zbiorczo na wszystkich hostach danego typu i roli – oraz datę weryfikacji.
-7. **Konta i dziennik zmian:** role *administrator*, *edytor*, *podgląd*. Każda zmiana trafia do dziennika z łańcuchem skrótów SHA-256, który wykrywa edycję wpisów. Po 30 minutach bezczynności aplikacja się blokuje.
+5. **Filtrowanie u źródła:** zdarzenia wycinasz tam, gdzie powstają. Sysmon filtruje własny `sysmonconfig.xml` (generowany per profil, reguły include/exclude), a Splunk zbiera cały kanał. W kanale Security o zakresie decyduje polityka audytu w GPO, a znany szum (4634, 4658, 5156…) wycina blacklista. Głośne kanały (System, PowerShell/Operational, TaskScheduler) mają whitelistę konkretnych Event ID. Urządzenia syslog filtrujesz poziomem i kategoriami na urządzeniu, a resztę szumu `nullQueue` na Heavy Forwarderze. Sekcja **Gdzie filtrować** opisuje to dla każdego z 42 typów.
+6. **Konfiguracje:** `inputs.conf` (Splunk UF), `agent.conf` + `local_rules.xml` (Wazuh), `winlogbeat.yml` / `filebeat.yml` (Elastic) oraz przygotowanie hosta lub urządzenia (auditpol, `sysmonconfig.xml`, reguły auditd `50-siem.rules`, CLI). Widok **Gotowy plik** pokazuje scalony plik dla podstawy i wszystkich wybranych ról. **Pobierz pakiet (.zip)** zawiera README i konfiguracje we wszystkich trzech profilach. Każdą warstwę możesz zastąpić własnym plikiem.
+7. **Stan zbierania:** dla każdej pozycji oznaczasz *Zbierane*, *Częściowo*, *Brak* albo *Nie dotyczy* – na jednym hoście albo zbiorczo na wszystkich hostach danego typu i roli – oraz datę weryfikacji.
+8. **Konta i dziennik zmian:** role *administrator*, *edytor*, *podgląd*. Każda zmiana trafia do dziennika z łańcuchem skrótów SHA-256, który wykrywa edycję wpisów. Po 30 minutach bezczynności aplikacja się blokuje.
 
 ## Katalog urządzeń
 
@@ -44,12 +45,12 @@
 | Serwery i stacje | Windows Server, stacje Windows, macOS, Linux, systemy legacy |
 | Sieć przewodowa | Cisco, HPE Aruba / ProCurve / Comware, MikroTik, inne (Juniper, Huawei…), SD-WAN, DDI |
 | Wi-Fi | Ubiquiti UniFi, inne kontrolery i AP |
-| Firewalle, VPN, proxy, NAC | Palo Alto, FortiGate, Cisco ASA/FTD, Check Point / Sophos / pfSense, ADC, proxy, NAC, bramki poczty, CDN/WAF |
-| Wirtualizacja, sprzęt, backup, PKI | VMware (ESXi, vCenter, NSX), Proxmox / Nutanix, BMC (iDRAC, iLO), backup, HSM / PKI |
-| Chmura, SaaS i tożsamość | Entra ID / M365, Okta, Google Workspace, MFA, MDM, IaaS (AWS, Azure, GCP) |
+| Firewalle, VPN, proxy, NAC | Palo Alto, FortiGate, Cisco ASA/FTD, Check Point / Sophos Firewall i UTM / pfSense, ADC, proxy, NAC, bramki poczty, CDN/WAF |
+| Wirtualizacja, sprzęt, backup, PKI | VMware (ESXi, vCenter, NSX), Proxmox / Nutanix, BMC (Dell iDRAC, HPE iLO), backup, HSM / PKI |
+| Chmura, SaaS i tożsamość | Entra ID / M365, Defender XDR, Okta, Google Workspace, MFA, MDM, IaaS (AWS, Azure, GCP) |
 | Aplikacje, DevOps i narzędzia IT | DevOps, VDI, MFT, narzędzia IT i bezpieczeństwa, VoIP |
 | OT, IoT i bezpieczeństwo fizyczne | OT/ICS, SKD i CCTV, UPS / BMS, IoT, drukarki |
-| Dane i aplikacje biznesowe | bazy danych i NoSQL, SAP, Atlassian, CRM, POS |
+| Dane i aplikacje biznesowe | bazy danych i NoSQL, SAP (ABAP, HANA, Java), Atlassian, CRM, POS |
 
 ## Import hostów (CSV)
 
