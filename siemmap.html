@@ -352,6 +352,24 @@ ol.check b{color:var(--ink)}
 .badge.soft{background:var(--surface-2);color:var(--ink-2)}
 pre.cfg-file{max-height:640px}
 .cfg-bar .btns{flex-wrap:wrap}
+.col-h{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+h3.col-h{align-items:baseline}
+.col-i{flex:none;font-size:12.5px;line-height:1;color:var(--ink-3);transition:transform .12s ease;display:inline-block;transform-origin:50% 50%}
+.col > .col-h .col-i{transform:rotate(-90deg)}
+.col-h:hover .col-i{color:var(--accent)}
+.cblk-h.col-h{justify-content:flex-start}
+.cblk-h.col-h>button{margin-left:auto}
+.col > .sec-body{display:none}
+.sec.col{padding-bottom:10px}
+.col-h:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ways{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.way{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--card-2,transparent)}
+.way b{font-size:13.5px}
+.way code{font-size:11.5px;overflow-wrap:anywhere;color:var(--ink-2)}
+.way .yes,.way .no{font-size:12.5px;line-height:1.45;color:var(--ink-2);padding-left:14px;position:relative}
+.way .yes:before{content:"+";position:absolute;left:0;color:var(--ok,#2e7d5b);font-weight:700}
+.way .no:before{content:"\2212";position:absolute;left:0;color:var(--warn,#a4622a);font-weight:700}
+@media(max-width:760px){.ways{grid-template-columns:1fr}}
 .flt{display:grid;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .flt .fr{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr) minmax(0,2.2fr);gap:12px;padding:10px 14px;border-top:1px solid var(--line);font-size:13px;align-items:start}
 .flt .fr:first-child{border-top:0}
@@ -417,7 +435,7 @@ pre.cfg-file{max-height:640px}
  * na warunkach licencji MIT (pełna treść: LICENSE w repozytorium oraz „Licencja i autor” w stopce aplikacji).
  * Projekt prywatny autora, tworzony hobbystycznie w czasie wolnym, rozwijany jako otwarte oprogramowanie.
  */
-const APP = Object.freeze({name:"SIEMMap", version:"3.9", author:"Marcin Lewandowski", email:"marcin.lewandowski.x@gmail.com", license:"MIT", repo:"https://github.com/mael777it/SIEMMap", copyright:"Copyright (c) 2026 Marcin Lewandowski"});
+const APP = Object.freeze({name:"SIEMMap", version:"3.12", author:"Marcin Lewandowski", email:"marcin.lewandowski.x@gmail.com", license:"MIT", repo:"https://github.com/mael777it/SIEMMap", copyright:"Copyright (c) 2026 Marcin Lewandowski"});
 /* ===================== BAZA WIEDZY =====================
    Pozycja: [id, zdarzenie, źródło/ID, priorytet 1-3, wolumen L/M/H, po co, ATT&CK]
    Warstwa (podstawa typu lub rola): {name, desc, items, dont, tips, cfg:{dev,splunk,wazuh,elastic}, test, det}
@@ -5672,12 +5690,508 @@ function fltRows(t){ return (FLT[t]||[]).map(r=>({co:r[0], gdzie:FL[r[1]]||r[1],
 function splunkNullQueue(t, roles){
   const rows = fltRows(t).filter(r=>r.rx); if(!rows.length) return "";
   const sp = composeRaw(t, roles||[], "splunk", "rec"); const st = (sp.match(/sourcetype = (\S+)/)||[])[1]; if(!st) return "";
-  const name = "siemmap_null_" + t;
-  return ["", "# --- resztkowy szum: Heavy Forwarder albo indekser (UF czytający pliki nie filtruje po treści) ---",
-    "# Najpierw wytnij u źródła (sekcja „Gdzie filtrować” w pakiecie). Poniższe tylko dla tego, czego nie da się wyłączyć.",
-    "# props.conf", `# [${st}]`, `# TRANSFORMS-siemmap_null = ${name}`, "# transforms.conf", `# [${name}]`,
-    `# REGEX = ${rows.map(r=>r.rx).join("|")}`, "# DEST_KEY = queue", "# FORMAT = nullQueue"].join("\n") + "\n";
+  return ["", "# --- resztkowy szum (drogi B1 i B2) ---",
+    "# Najpierw wytnij u źródła: host/filtrowanie-u-zrodla.txt w tym pakiecie.",
+    `# Reszta: gotowe props.conf i transforms.conf dla sourcetype ${st} znajdziesz w katalogach`,
+    "# hf/ (Heavy Forwarder) i idx/ (indekser). Universal Forwarder nie filtruje po treści zdarzenia."].join("\n") + "\n";
 }
+/* ===== Drogi B1 i B2: wycinanie szumu w Splunku =====
+   B1 – Heavy Forwarder, B2 – indekser (samodzielny albo klaster).
+   Ten sam zestaw reguł, inne miejsce instalacji i inne koszty.
+   Universal Forwarder nie ogląda pojedynczych zdarzeń: props/transforms go nie dotyczą. */
+
+const SYS_ST = ["XmlWinEventLog:Microsoft-Windows-Sysmon/Operational", "WinEventLog:Microsoft-Windows-Sysmon/Operational"];
+
+/* [nazwa, profile w których reguła jest aktywna, opis, regex] */
+const HF_RULES = [
+ ["sysmon_il_ms_signed", ["min","rec"], "EID 7 ImageLoad: biblioteki z C:\\Windows podpisane przez Microsoft z ważnym podpisem. Zwykle 40-60% wolumenu Sysmona. Ładowanie podpisanej biblioteki spoza C:\\Windows (sideloading) zostaje.",
+  "(?s)<EventID>7</EventID>(?=.*<Data Name='SignatureStatus'>Valid</Data>)(?=.*<Data Name='Signature'>Microsoft [^<]*</Data>)(?=.*<Data Name='ImageLoaded'>C:\\\\Windows\\\\[^<]*</Data>)"],
+ ["sysmon_net_agents", ["min","rec","max"], "EID 3 NetworkConnect z własnych agentów (UF, Wazuh, Defender, Beats). Ruch agenta do swojego serwera, bez wartości detekcyjnej.",
+  "(?s)<EventID>3</EventID>(?=.*<Data Name='Image'>[^<]*\\\\(?:splunkd|wazuh-agent|MsMpEng|winlogbeat|filebeat|SenseCncProxy)\\.exe</Data>)"],
+ ["sysmon_pa_agents", ["min","rec","max"], "EID 10 ProcessAccess, gdzie źródłem jest agent AV/EDR/monitoringu. Skanowanie pamięci przez własnego agenta.",
+  "(?s)<EventID>10</EventID>(?=.*<Data Name='SourceImage'>[^<]*\\\\(?:MsMpEng|splunkd|wazuh-agent|SenseIR|MonitoringHost)\\.exe</Data>)"],
+ ["sysmon_net_browsers", ["min","rec"], "EID 3 z przeglądarek na 80/443. Uwaga: ukrywa połączenia C2 realizowane przez proces przeglądarki. Na stacjach administratorów i PAW tej reguły nie używaj.",
+  "(?s)<EventID>3</EventID>(?=.*<Data Name='Image'>[^<]*\\\\(?:chrome|msedge|firefox|opera)\\.exe</Data>)(?=.*<Data Name='DestinationPort'>(?:80|443)</Data>)"],
+ ["sysmon_reg_ui", ["min","rec"], "EID 12-14: klucze interfejsu użytkownika (MuiCache, TrayNotify, powiadomienia, indeks wyszukiwania). Klucze o wartości śledczej (UserAssist, ShellBags, Run, Services) zostają.",
+  "(?s)<EventID>1[234]</EventID>(?=.*<Data Name='TargetObject'>[^<]*\\\\(?:MuiCache|TrayNotify|Notifications\\\\Settings|CurrentVersion\\\\Search)\\\\[^<]*</Data>)"],
+ ["sysmon_file_cache", ["min","rec"], "EID 11 FileCreate w katalogach cache: przeglądarki, Windows Update, Delivery Optimization, Teams, OneDrive, ccmcache.",
+  "(?s)<EventID>11</EventID>(?=.*<Data Name='TargetFilename'>[^<]*\\\\(?:INetCache|Code Cache|Cache_Data|Service Worker|DeliveryOptimization|SoftwareDistribution\\\\Download|Teams\\\\Cache|ccmcache)\\\\[^<]*</Data>)"],
+ ["sysmon_dns_ptr", ["min"], "EID 22: zapytania PTR (in-addr.arpa) i do usług aktualizacji Microsoftu. Włączaj tylko przy dużym wolumenie DNS.",
+  "(?s)<EventID>22</EventID>(?=.*<Data Name='QueryName'>(?:[^<]*\\.in-addr\\.arpa|[^<]*\\.(?:windowsupdate\\.com|events\\.data\\.microsoft\\.com))</Data>)"]
+];
+
+const HF_KEEP = "1 (ProcessCreate), 4 i 16 (start, stop i zmiana konfiguracji Sysmona), 6 (DriverLoad), 8 (CreateRemoteThread), 9 (RawAccessRead), 15 (ADS), 17-18 (named pipe), 19-21 (WMI), 23 i 26 (FileDelete), 25 (ProcessTampering), 27-29 (blokady i FileExecutableDetected)";
+
+/* Zestaw reguł dla typu: Windows ma Sysmona, pozostałe typy – wiersze z regexem z sekcji „Gdzie filtrować” */
+function hfRules(t){
+  if(t==="win" || t==="wks") return HF_RULES;
+  return fltRows(t).filter(r=>r.rx).map((r,i)=>["siemmap_" + t + "_" + (i+1), ["min","rec","max"], r.co + " – " + r.jak, r.rx]);
+}
+function hfSourcetypes(t, roles){
+  if(t==="win" || t==="wks") return SYS_ST;
+  const sp = composeRaw(t, roles||[], "splunk", "rec"), st = (sp.match(/sourcetype = (\S+)/)||[])[1];
+  return st ? [st] : [];
+}
+function hfHas(t, roles){ return hfRules(t).length > 0 && hfSourcetypes(t, roles).length > 0; }
+
+const HF_PLACE = {
+ hf: {label:"Heavy Forwarder", dir:"hf", head:[
+   "# Miejsce: Heavy Forwarder (droga B1).",
+   "# Instalacja: $SPLUNK_HOME/etc/apps/siemmap_filters/local/{props.conf,transforms.conf}",
+   "# na każdym HF, przez który przechodzą te dane, potem restart HF.",
+   "# Jeśli UF-y wysyłają dane bezpośrednio do indekserów, te pliki nic nie zrobią:",
+   "# użyj wtedy wersji z katalogu idx/."]},
+ idx: {label:"indekser", dir:"idx", head:[
+   "# Miejsce: indekser (droga B2). Splunk Enterprise on-prem.",
+   "#",
+   "# Klaster indekserów – na manager node:",
+   "#   $SPLUNK_HOME/etc/manager-apps/siemmap_filters/local/{props.conf,transforms.conf}",
+   "#   (w wersjach sprzed 9.x katalog nazywa się master-apps)",
+   "#   splunk apply cluster-bundle --answer-yes",
+   "#   splunk show cluster-bundle-status        # sprawdź, czy peery przyjęły bundle",
+   "#   Uwaga: zmiana props/transforms powoduje rolling restart peerów.",
+   "#",
+   "# Pojedyncze indeksery (bez klastra) – na każdym osobno:",
+   "#   $SPLUNK_HOME/etc/apps/siemmap_filters/local/{props.conf,transforms.conf}",
+   "#   splunk btool props list --debug siemmap  # sprawdź, skąd pochodzi ustawienie",
+   "#   splunk restart",
+   "#",
+   "# Pominięcie choćby jednego peera daje niespójne dane: część zdarzeń zostanie",
+   "# zaindeksowana, część nie, i wyniki wyszukiwań będą zależeć od tego, na który",
+   "# peer trafił bucket.",
+   "#",
+   "# Ważne przy architekturze UF -> indekser: filtr działa dopiero na indekserze.",
+   "# Oszczędzasz licencję i miejsce na dysku, ale nie pasmo z hostów i oddziałów,",
+   "# a parsowanie odrzucanych zdarzeń obciąża CPU indekserów.",
+   "#",
+   "# Splunk Cloud: nie wgrasz tam plików .conf na indeksery. Zostaje Ingest Actions",
+   "# w GUI albo własny Heavy Forwarder przed Cloudem (wersja z katalogu hf/)."]}
+};
+
+function hfProps(t, roles, prof, place){
+  const P = HF_PLACE[place], on = hfRules(t).filter(r => r[1].includes(prof)), sts = hfSourcetypes(t, roles);
+  const sys = (t==="win" || t==="wks");
+  const o = [
+    "# " + APP.name + " v" + APP.version + " – props.conf: wycinanie szumu w Splunku (" + P.label + ")",
+    "# Pakiet: " + pkgTitle(t, roles) + " · profil " + PROFILES[prof].name,
+    "#"
+  ].concat(P.head, [
+    "#",
+    "# Droga A (filtrowanie u źródła) jest tańsza: host nie generuje zdarzenia,",
+    "# nie zajmuje ono miejsca w dzienniku i nie przechodzi przez sieć. Tutaj wycinaj",
+    "# to, co zmienia się często albo czego nie da się wyłączyć na źródle.",
+    "# Licencja: zdarzenia trafiające do nullQueue nie liczą się do wolumenu indeksowania.",
+    "#",
+    "# Kolejność transformacji ma znaczenie: pierwsza, która skieruje zdarzenie",
+    "# do nullQueue, kończy jego przetwarzanie."
+  ]);
+  if(sys) o.push("#", "# Wyrażenia zakładają renderXml = true w inputs.conf (tak generuje " + APP.name + ").",
+    "# Dla zdarzeń tekstowych wzorzec to np. Image: C:\\\\... zamiast <Data Name='Image'>C:\\\\...</Data>.",
+    "#", "# NIGDY nie kieruj do nullQueue: EID " + HF_KEEP + ".");
+  else o.push("#", "# Sprawdź sourcetype: jeśli używasz SC4S albo własnego add-onu, nazwa może być inna.");
+  o.push("");
+  for(const st of sts){
+    o.push("[" + st + "]");
+    if(on.length) o.push("TRANSFORMS-siemmap_filters = " + on.map(r=>r[0]).join(", "));
+    else o.push("# W tym profilu nic nie wycinamy domyślnie – dopisz nazwy reguł z transforms.conf.");
+    o.push("");
+  }
+  return o.join("\n");
+}
+
+function hfTransforms(t, roles, prof, place){
+  const P = HF_PLACE[place], rules = hfRules(t), sts = hfSourcetypes(t, roles);
+  const o = [
+    "# " + APP.name + " v" + APP.version + " – transforms.conf (" + P.label + ")",
+    "# Pakiet: " + pkgTitle(t, roles) + " · profil " + PROFILES[prof].name,
+    "#",
+    "# Zanim włączysz regułę, policz, ile zdarzeń i bajtów usunie:",
+    "#   index=* sourcetype=\"" + (sts[0]||"<sourcetype>") + "\" earliest=-24h",
+    "#   | eval b=len(_raw) | stats count sum(b) as bajty",
+    "# i sprawdź samo wyrażenie na próbce:",
+    "#   ... | regex _raw=\"<wyrażenie z reguły>\" | stats count",
+    "#",
+    "# Reguły spoza profilu " + PROFILES[prof].name + " są zakomentowane. Żeby włączyć,",
+    "# odkomentuj stanzę i dopisz jej nazwę do TRANSFORMS-siemmap_filters w props.conf.",
+    ""
+  ];
+  for(const [name, profs, desc, rx] of rules){
+    const act = profs.includes(prof), c = act ? "" : "# ";
+    o.push("# " + desc);
+    if(!act) o.push("# (poza profilem " + PROFILES[prof].name + ")");
+    o.push(c + "[" + name + "]", c + "REGEX = " + rx, c + "DEST_KEY = queue", c + "FORMAT = nullQueue", "");
+  }
+  o.push(
+    "# Wariant z INGEST_EVAL (Splunk 8.0+) zamiast REGEX – często tańszy, bo warunek",
+    "# liczysz raz, zamiast dopasowywać wyrażenie do całego _raw:",
+    "# [siemmap_drop_eval]",
+    "# INGEST_EVAL = queue=if(match(_raw,\"<wzorzec>\"),\"nullQueue\",queue)",
+    "",
+    "# Splunk Cloud: te same filtry złożysz w Ingest Actions (GUI). Przy dużej flocie",
+    "# i on-prem rozważ Edge Processor – zmiana filtra bez restartu indekserów."
+  );
+  return o.join("\n");
+}
+
+/* Pliki B1 i B2 w zakładce Splunk dla każdego typu, który ma reguły */
+(function(){
+  for(const t of Object.keys(KB)){
+    const prev = KB[t].base.extra;
+    KB[t].base.extra = (prof, roles) => {
+      const out = prev ? prev(prof, roles) : [];
+      if(!hfHas(t, roles)) return out;
+      for(const place of ["hf","idx"]){
+        const P = HF_PLACE[place];
+        out.push({k:"splunk", name:P.dir + "/props.conf", label:"props.conf (" + P.label + ")", data:hfProps(t, roles, prof, place)});
+        out.push({k:"splunk", name:P.dir + "/transforms.conf", label:"transforms.conf (" + P.label + ")", data:hfTransforms(t, roles, prof, place)});
+      }
+      return out;
+    };
+  }
+})();
+
+/* Wiersze w sekcji „Gdzie filtrować” */
+FLT.win.splice(1, 0, ["Sysmon – gdy wolisz jedno miejsce zarządzania","HF","Zostaw w sysmonconfig.xml wykluczenia strukturalne (własne agenty), a resztę wycinaj przez props.conf i transforms.conf – na HF (hf/) albo na indekserach (idx/). Host i tak generuje zdarzenia, a kanał Sysmona rotuje szybciej."]);
+FLT.wks.splice(1, 0, ["Sysmon – gdy wolisz jedno miejsce zarządzania","HF","Ten sam pakiet props/transforms co dla serwerów. Na stacjach kosztuje więcej: to tam powstaje najwięcej zdarzeń EID 3, 7 i 11."]);
+/* ===== Droga A: jak wyciąć logi u źródła (albo zbierać tylko to, co potrzebne) =====
+   Generuje plik host/filtrowanie-u-zrodla.txt dla każdego typu urządzenia. */
+
+const SRC_CMD = {
+ win: [
+  ["Sysmon – filtruje własna konfiguracja, nie Splunk", [
+   "sysmon64.exe -accepteula -i sysmonconfig.xml    # pierwsza instalacja",
+   "sysmon64.exe -c sysmonconfig.xml                # podmiana konfiguracji (bez reinstalacji)",
+   "sysmon64.exe -c                                 # co jest aktualnie załadowane",
+   "",
+   "Zasady konfiguracji:",
+   "- exclude ma pierwszeństwo nad include; w <Rule groupRelation=\"and\"> muszą pasować wszystkie warunki,",
+   "- wykluczaj po pełnej ścieżce i wydawcy podpisu, nie po samej nazwie pliku (evil.exe łatwo nazwać chrome.exe),",
+   "- nigdy nie wyłączaj EID 1, 4, 6, 8, 11, 16, 23, 25 – 4 i 16 mówią, że ktoś ruszył samego Sysmona,",
+   "- największy wolumen dają 3 (NetworkConnect), 7 (ImageLoad), 11 (FileCreate) i 22 (DNS): tu zaczynaj strojenie.",
+   "",
+   "Rozmiar kanału (szum skraca okno śledcze na hoście):",
+   "wevtutil sl Microsoft-Windows-Sysmon/Operational /ms:1073741824   # 1 GB"]],
+  ["Security – zakres ustala polityka audytu, nie inputs.conf", [
+   "auditpol /get /category:*                                   # co jest realnie włączone",
+   "auditpol /set /subcategory:\"Process Creation\" /success:enable",
+   "",
+   "GPO: Konfiguracja komputera > Zasady > Ustawienia systemu Windows > Ustawienia zabezpieczeń >",
+   "     Zaawansowana konfiguracja zasad inspekcji. Ustawiaj podkategorie, nie kategorie zbiorcze.",
+   "Wiersz polecenia w 4688: Szablony administracyjne > System > Inspekcja tworzenia procesu >",
+   "     Dołącz wiersz polecenia w zdarzeniach tworzenia procesu = Włączone.",
+   "",
+   "Podkategorie, które generują najwięcej szumu (włączaj świadomie):",
+   "- Filtering Platform Connection (5156, 5157) – tylko jeśli nie masz logów z firewalla,",
+   "- Handle Manipulation (4656, 4658, 4690) – praktycznie zawsze do pominięcia,",
+   "- Audit Filtering Platform Packet Drop (5152, 5153) – nie na serwerach produkcyjnych.",
+   "",
+   "4662 i 4663 powstają tylko tam, gdzie ustawisz SACL. W AD wpisy inspekcji zakładasz na wybranych",
+   "obiektach i OU (ADUC > Widok zaawansowany > Zabezpieczenia > Zaawansowane > Inspekcja),",
+   "a nie na całej domenie – inaczej jeden serwer plików zaleje cały indeks.",
+   "",
+   "wevtutil sl Security /ms:2147483648     # 2 GB, żeby szum nie wypychał zdarzeń przed odczytem",
+   "wevtutil gl Security                    # sprawdzenie ustawień kanału"]],
+  ["Kanały głośne – zbieraj tylko wybrane Event ID", [
+   "Najpierw zobacz, co w ogóle powstaje na typowym hoście:",
+   "Get-WinEvent -LogName System -MaxEvents 20000 | Group-Object Id |",
+   "  Sort-Object Count -Descending | Select-Object -First 20",
+   "",
+   "Potem w inputs.conf zostaw tylko to, co przydatne (tak generuje SIEMMap):",
+   "[WinEventLog://System]",
+   "whitelist = 104,1074,6008,7031,7034,7040,7045",
+   "",
+   "Składnia z wyrażeniem, gdy potrzebujesz warunku na polu:",
+   "whitelist1 = EventCode=%^(4624|4625)$% User=%^(?!ANONYMOUS LOGON)%",
+   "Zasada: kanał z kilkoma przydatnymi ID -> whitelista; kanał wartościowy z kilkoma śmieciami -> blacklista."]],
+  ["PowerShell – ogranicz to, co powstaje, w GPO", [
+   "Szablony administracyjne > Składniki systemu Windows > Windows PowerShell:",
+   "- Włącz rejestrowanie bloków skryptów = Włączone (daje 4104),",
+   "- NIE włączaj \"Rejestruj początek i koniec wywołania bloku skryptu\" – to generuje 4105/4106 masowo,",
+   "- Rejestrowanie modułów: tylko wybrane moduły, nie *,",
+   "- Transkrypcje zapisuj na udział, nie zbieraj ich kanałem WinEventLog.",
+   "",
+   "W profilu Minimum zbieraj sam 4104; 4103 dodaje pipeline i potrafi podwoić wolumen."]],
+  ["Czego w ogóle nie włączać na serwerach", [
+   "- Inspekcja dostępu do obiektów jądra i inspekcja uchwytów (4656/4658/4690),",
+   "- DS Access dla wszystkich klas obiektów AD (4662 bez zawężenia SACL),",
+   "- Field Engineering / tryb debug w kanałach diagnostycznych,",
+   "- kanały Analytic i Debug (są wyłączone celowo)."]]],
+ wks: [
+  ["Sysmon na stacjach", [
+   "Na stacjach największy wolumen dają EID 3, 7, 11 i 22 – w konfiguracji wyklucz:",
+   "- procesy przeglądarek dla połączeń na 80/443 (poza PAW i stacjami administratorów),",
+   "- katalogi cache (INetCache, Code Cache, ccmcache, DeliveryOptimization),",
+   "- własne agenty (UF, Wazuh, EDR) po pełnej ścieżce.",
+   "sysmon64.exe -c sysmonconfig.xml",
+   "",
+   "Jeśli masz EDR z pełną telemetrią procesów, nie duplikuj jej Sysmonem na całej flocie:",
+   "Sysmon na PAW, stacjach administratorów i systemach krytycznych."]],
+  ["Polityka audytu dla stacji", [
+   "auditpol /get /category:* na wzorcowej stacji – porównaj z serwerową.",
+   "Na stacjach zwykle wystarczy: logowania (4624/4625/4648), tworzenie procesów (4688),",
+   "zmiany kont lokalnych, usługi (7045 w System), Defender i PowerShell 4104.",
+   "Nie włączaj Filtering Platform Connection – to dziesiątki zdarzeń na minutę na stację."]]],
+ lin: [
+  ["auditd – zakres ustalają reguły, nie agent", [
+   "auditctl -l                       # aktywne reguły",
+   "auditctl -s                       # statystyki: lost > 0 oznacza gubione zdarzenia",
+   "augenrules --load                 # przeładowanie /etc/audit/rules.d/*.rules",
+   "",
+   "Wykluczenia MUSZĄ być przed regułami ogólnymi (pierwsza pasująca wygrywa):",
+   "-a never,exit -F arch=b64 -F exe=/opt/splunkforwarder/bin/splunkd",
+   "-a never,exit -F arch=b64 -F exe=/var/ossec/bin/wazuh-agentd",
+   "",
+   "execve tylko dla sesji interaktywnych (bez demonów i cronów systemowych):",
+   "-a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=unset -k exec",
+   "",
+   "Bufor i limit, żeby audyt nie zdusił hosta:",
+   "-b 8192",
+   "-r 0        # 0 = bez limitu; ustaw np. 500, jeśli host jest obciążony"]],
+  ["rsyslog – odrzucanie u źródła", [
+   "W /etc/rsyslog.d/10-siem.conf, przed regułami wysyłki:",
+   "if ($syslogtag contains 'CRON' and $msg contains 'pam_unix(cron:session)') then stop",
+   "",
+   "Wysyłaj tylko potrzebne facility, zamiast *.*:",
+   "auth,authpriv.*  @@siem.local:6514",
+   "Sprawdzenie składni: rsyslogd -N1"]],
+  ["journald i pliki", [
+   "/etc/systemd/journald.conf: Storage=persistent, RateLimitIntervalSec=30s, RateLimitBurst=10000",
+   "W agencie zbieraj wybrane jednostki (sshd, sudo, systemd-logind), nie cały dziennik:",
+   "journalctl -u sshd -f",
+   "Nie monitoruj katalogów wildcardem (/var/log/*) – trafi tam dmesg, logi aplikacji i metryki."]]],
+ mac: [
+  ["Unified Log – predykat zamiast wszystkiego", [
+   "log stream --predicate 'subsystem == \"com.apple.securityd\" OR process == \"sudo\"' --style ndjson",
+   "Cały Unified Log to setki MB na godzinę na hosta – zawsze z predykatem.",
+   "Endpoint Security Framework: w agencie wybierz typy zdarzeń (exec, authentication, xprotect)."]]],
+ cisco: [
+  ["Poziom i zdarzenia interfejsów", [
+   "logging trap informational           # nigdy debugging",
+   "no logging console                   # console logging kosztuje CPU",
+   "interface range Gi1/0/1-48",
+   " no logging event link-status        # porty dostępowe",
+   "",
+   "Discriminator dla resztkowego szumu (filtr na samym urządzeniu):",
+   "logging discriminator NOSPAM msg-body drops LINEPROTO-5-UPDOWN|LINK-3-UPDOWN",
+   "logging host 10.0.0.10 discriminator NOSPAM",
+   "logging rate-limit 100 except errors",
+   "",
+   "show logging                         # weryfikacja"]],
+  ["ACL i uwierzytelnianie", [
+   "Słowo log tylko na regułach zarządzania (deny do VTY/SNMP), nie na ruchu użytkowników.",
+   "Zostaw: %SEC_LOGIN, %SYS-5-CONFIG_I, %AAA, %SEC-6-IPACCESSLOGP dla deny do zarządzania."]]],
+ hp: [
+  ["ArubaOS-CX / Comware", [
+   "ArubaOS-CX: logging 10.0.0.10 severity info   (+ logging filter dla modułów portów)",
+   "Comware:   info-center loghost 10.0.0.10 facility local7",
+   "           info-center source PORT loghost level warning   # ścisz link up/down",
+   "ProCurve:  logging 10.0.0.10 ; logging severity info"]]],
+ mt: [
+  ["Tematy logowania MikroTika", [
+   "/system logging add topics=account action=remote",
+   "/system logging add topics=system,info action=remote",
+   "/system logging add topics=critical,error action=remote",
+   "/system logging print                      # przegląd reguł",
+   "/system logging remove [find topics~\"debug\"]",
+   "",
+   "Firewall: log=yes tylko na regułach drop w chain=input i wybranych forward:",
+   "/ip firewall filter set [find action=drop chain=input] log=yes log-prefix=DROP-IN"]]],
+ pan: [
+  ["Log Forwarding Profile i reguły", [
+   "Objects > Log Forwarding > profil: dodaj typy threat, system, config, auth, globalprotect w całości.",
+   "Traffic dodawaj z filtrem, np. (zone.src neq untrust) or (action eq deny).",
+   "Policies > Security > reguła > Actions: Log at Session End = włączone, Log at Session Start = wyłączone.",
+   "Na regule drop-all ze strefy untrust wyłącz logowanie – to zwykle najgłośniejsza reguła na firewallu.",
+   "",
+   "CLI do sprawdzenia wolumenu:",
+   "show logging-status",
+   "debug log-receiver statistics"]],
+  ["URL filtering i kategorie", [
+   "Objects > Security Profiles > URL Filtering: kategorie niekrytyczne = allow (bez log),",
+   "blokady i kategorie ryzykowne = block/alert z logowaniem.",
+   "Wyłącz logowanie kontenerów stron (log container page only), żeby nie zbierać każdego obiektu."]]],
+ forti: [
+  ["Filtr syslog w FortiOS", [
+   "config log syslogd setting",
+   "  set status enable",
+   "  set server 10.0.0.10",
+   "  set facility local7",
+   "end",
+   "config log syslogd filter",
+   "  set severity information",
+   "  set forward-traffic enable      # wyłącz, jeśli nie potrzebujesz całego ruchu",
+   "  set local-traffic disable",
+   "  set multicast-traffic disable",
+   "  set sniffer-traffic disable",
+   "end",
+   "",
+   "Implicit deny loguj tylko w profilu Maksymalnym:",
+   "config system settings",
+   "  set fwpolicy-implicit-log enable",
+   "end"]]],
+ asa: [
+  ["Wyciszanie komunikatów per połączenie", [
+   "logging trap informational",
+   "no logging message 302013     # Built inbound TCP connection",
+   "no logging message 302014     # Teardown TCP connection",
+   "no logging message 302015     # Built UDP connection",
+   "no logging message 302016     # Teardown UDP connection",
+   "logging rate-limit 100 1 level 6",
+   "",
+   "Podnieś priorytet zdarzeń administracyjnych, żeby nie zginęły:",
+   "logging message 111008 level notifications",
+   "logging message 111009 level notifications",
+   "show logging                  # weryfikacja"]]],
+ fwx: [
+  ["Check Point / Sophos UTM / pfSense", [
+   "Check Point: Track = Log tylko na regułach drop i na granicach stref; w Log Exporter",
+   "  ustaw filtr typów (cpexport / Log Exporter > Filter), żeby nie wysyłać wszystkiego.",
+   "Sophos UTM: Logging & Reporting > Log Settings > Remote Syslog – zaznacz konkretne logi",
+   "  (Packet filter, Intrusion prevention, Web filter, Admin), nie wszystkie.",
+   "pfSense: Status > System Logs > Settings – wybierz kategorie; logowanie reguł włączaj punktowo."]]],
+ vmw: [
+  ["ESXi – poziom i kierowanie logów", [
+   "esxcli system syslog config set --loghost='tcp://10.0.0.10:514' --logLevel=info",
+   "esxcli system syslog reload",
+   "esxcli system syslog config logger list              # co jest wysyłane",
+   "",
+   "Advanced Settings hosta (ścisza gadatliwe podsystemy):",
+   "Config.HostAgent.log.level = info",
+   "Vpx.Vpxa.config.log.level  = info",
+   "",
+   "vmkernel potrafi zalać storage'owym szumem (NMP, ScsiDeviceIO) – to jest materiał",
+   "dla monitoringu, nie dla SIEM: odetnij na relayu/SC4S albo w regułach z katalogu hf/ i idx/."]],
+  ["vCenter i NSX", [
+   "vCenter: Administration > System Configuration > Syslog – strumień zdarzeń vim.event.* i logi SSO.",
+   "Pełnego vpxd.log nie wysyłaj na stałe, tylko na czas diagnozy.",
+   "NSX: logowanie w regułach DFW włączaj na drop i na przejściach T0, nie na allow wewnątrz strefy."]]],
+ ubnt: [
+  ["UniFi – kategorie w konsoli", [
+   "Settings > System > Advanced > Remote Logging: włącz syslog i zaznacz kategorie.",
+   "Zostaw: Admin Activity, Security Detections, Device (Critical), Triggers.",
+   "Wyłącz: Clients (asocjacje i roaming) oraz Traffic, chyba że prowadzisz dochodzenie.",
+   "Syslog Logging na politykach firewalla włączaj tylko na regułach block."]]],
+ ddi: [
+  ["DNS i DHCP", [
+   "Windows DNS: nie włączaj Debug Logging na stałe; kanał analityczny (Analytical) włączaj",
+   "  tylko na czas dochodzenia: wevtutil sl Microsoft-Windows-DNSServer/Analytical /e:true",
+   "BIND: logowanie kategorii queries wyłączone; zostaw rpz, security, lame-servers wyłączone.",
+   "Infoblox: włącz logowanie RPZ i odmów zamiast pełnego query loggingu.",
+   "DHCP (Windows): kanał DhcpAdminEvents, a plik DhcpSrvLog-*.log tylko przy śledztwie."]]],
+ bmc: [
+  ["iDRAC / iLO", [
+   "iDRAC: racadm set iDRAC.SysLog.Server1 10.0.0.10 ; racadm set iDRAC.SysLog.Enable Enabled",
+   "  W eventfilters zostaw kategorie Audit i Configuration oraz krytyczne System;",
+   "  wyłącz alerty informacyjne z czujników (temperatura, wentylatory) – to monitoring, nie SIEM.",
+   "iLO: Management > Remote Syslog; włącz Authentication Failure Logging na każdą nieudaną próbę.",
+   "Czujniki i telemetria sprzętowa: do systemu monitoringu, nie do SIEM."]]],
+ proxy: [
+  ["Proxy / SWG", [
+   "Loguj żądania główne, nie każdy obiekt strony (obrazy, CSS) – w większości SWG to osobna opcja.",
+   "Kategorie dozwolone przy dużym wolumenie: bez logowania albo do osobnego indeksu z krótką retencją.",
+   "Zawsze loguj: blokady, kategorie ryzykowne, pobrania plików, uwierzytelnienia użytkowników."]]],
+ nac: [
+  ["RADIUS / NAC", [
+   "Wyłącz interim accounting albo wydłuż interwał (Cisco ISE: Administration > System > Logging >",
+   "  Remote Logging Targets + Logging Categories – odznacz Passed Authentications przy dużej flocie).",
+   "Zawsze zostaw: Failed Authentications, zmiany polityk, zmiany konfiguracji, profilowanie urządzeń.",
+   "Na przełącznikach: aaa accounting update newinfo periodic 1440 zamiast domyślnego krótkiego interwału."]]],
+ cloud: [
+  ["Entra ID / M365 / Defender", [
+   "Entra ID > Diagnostic settings: wybierz kategorie (SignInLogs, AuditLogs, RiskyUsers,",
+   "  NonInteractiveUserSignInLogs osobno – ta ostatnia potrafi być 5-10x większa od interaktywnej).",
+   "M365: w Management Activity API subskrybuj tylko potrzebne strumienie (Audit.AzureActiveDirectory,",
+   "  Audit.Exchange, Audit.SharePoint, Audit.General, DLP.All).",
+   "Defender XDR: alerty i incydenty przez Graph; Streaming API tylko z wybranymi tabelami",
+   "  (DeviceProcessEvents i DeviceNetworkEvents to największy wolumen)."]]],
+ iaas: [
+  ["AWS / Azure / GCP", [
+   "CloudTrail: management events w całości; data events (S3, Lambda) tylko dla zasobów z danymi wrażliwymi.",
+   "Azure Activity Log: kategorie Administrative, Security, Policy; bez Autoscale i Recommendation.",
+   "Flow logi: tylko podsieci graniczne i z danymi, z próbkowaniem albo agregacją."]]],
+ datastore: [
+  ["Audyt w samej bazie", [
+   "Oracle: CREATE AUDIT POLICY ... ACTIONS LOGON, ALTER USER, GRANT; AUDIT POLICY ...",
+   "MSSQL: CREATE SERVER AUDIT SPECIFICATION z grupami LOGIN_CHANGE_PASSWORD_GROUP,",
+   "  SERVER_ROLE_MEMBER_CHANGE_GROUP, FAILED_LOGIN_GROUP – nie SELECT na wszystkim.",
+   "PostgreSQL: pgaudit.log = 'ddl,role,write' (bez 'read' na produkcji).",
+   "MySQL: audit_log_filter z regułą na logowania i DDL.",
+   "General query log zostaw wyłączony – to nie jest źródło dla SIEM."]]],
+ bizapp: [
+  ["SAP", [
+   "SAL (RSAU_CONFIG): filtry per klient i użytkownik – wszystkie logowania,",
+   "  pełny zakres tylko dla kont uprzywilejowanych (SAP*, DDIC, konta firefighter) i transakcji krytycznych.",
+   "HANA: polityki audytu według grup akcji; SELECT audytuj tylko na tabelach z danymi osobowymi.",
+   "Nie zbieraj dzienników aplikacyjnych i śladów wydajnościowych (ST05, SQL trace)."]]]
+};
+
+const SRC_CHK = {
+ win: ["Get-WinEvent -ListLog Security,System,Microsoft-Windows-Sysmon/Operational | Select LogName,RecordCount,FileSize",
+   "Get-WinEvent -LogName Security -MaxEvents 50000 | Group-Object Id | Sort Count -Descending | Select -First 20",
+   "auditpol /get /category:* | findstr /i \"Success Failure\""],
+ wks: ["Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational -MaxEvents 20000 | Group-Object Id | Sort Count -Descending"],
+ lin: ["aureport --summary", "auditctl -s | grep -E 'lost|backlog'", "journalctl --disk-usage"],
+ cisco: ["show logging | include Log Buffer", "show logging discriminator"],
+ pan: ["show logging-status", "show system logdb-quota"],
+ forti: ["diagnose log test", "execute log filter category traffic ; execute log display"],
+ asa: ["show logging setting", "show logging queue"],
+ vmw: ["esxcli system syslog config get", "esxcli system syslog config logger list"]
+};
+
+function srcGuide(t, roles, prof){
+  const rows = fltRows(t), cmd = SRC_CMD[t] || [], chk = SRC_CHK[t] || [];
+  const o = [
+    "# " + APP.name + " v" + APP.version + " – Droga A: filtrowanie u źródła",
+    "# Pakiet: " + pkgTitle(t, roles) + " · profil " + PROFILES[prof].name,
+    "#",
+    "# Zdarzenie, które nie powstanie, nie kosztuje nic: ani CPU hosta, ani miejsca",
+    "# w dzienniku, ani pasma, ani licencji. Filtrowanie w Splunku (drogi B1 i B2,",
+    "# katalogi hf/ i idx/) oszczędza tylko licencję i miejsce na indekserach.",
+    "#",
+    "# Odwrotna strona: zmiana tutaj to wdrożenie na flotę (GPO, Ansible, konsola",
+    "# urządzenia). Szum zmienny i lokalny łatwiej wyciąć w Splunku.",
+    ""
+  ];
+  if(rows.length){
+    o.push("=== Co wyciąć i gdzie ===", "");
+    rows.forEach((r,i)=>{ o.push((i+1) + ". " + r.co + "   [" + r.gdzie + "]"); o.push("   " + r.jak); o.push(""); });
+  }
+  if(cmd.length){
+    o.push("=== Jak to zrobić ===", "");
+    for(const [title, lines] of cmd){ o.push("--- " + title + " ---"); for(const l of lines) o.push(l ? "  " + l : ""); o.push(""); }
+  } else {
+    o.push("=== Jak to zrobić ===", "",
+      "  Dla tego typu zakres ustawiasz w konsoli urządzenia albo w konektorze:",
+      "  wybierz kategorie i poziom logowania zgodnie z tabelą powyżej, a dopiero",
+      "  resztkowy szum wycinaj w Splunku (katalogi hf/ i idx/).", "");
+  }
+  o.push("=== Jak sprawdzić efekt ===", "");
+  for(const l of chk) o.push("  " + l);
+  o.push(
+    "  Po zmianie policz wolumen w Splunku (24 h przed i po):",
+    "    index=* sourcetype=<sourcetype> earliest=-24h | eval b=len(_raw) | stats count sum(b) as bajty",
+    "  i sprawdź, czy nie zniknęły zdarzenia P1 z listy pakietu.",
+    "",
+    "=== Czego nie wycinać ===",
+    "",
+    "  Zdarzenia P1 z tego pakietu, zmiany konfiguracji samego logowania (kto wyłączył audyt),",
+    "  start i zatrzymanie agenta oraz zdarzenia uwierzytelnienia – w tym udane.",
+    "  Cisza w logach jest sygnałem tylko wtedy, gdy wiesz, że coś powinno tam być."
+  );
+  return o.join("\n");
+}
+
+/* Plik dla każdego typu, w zakładce przygotowania hosta/urządzenia */
+(function(){
+  for(const t of Object.keys(KB)){
+    const prev = KB[t].base.extra;
+    KB[t].base.extra = (prof, roles) => {
+      const out = prev ? prev(prof, roles) : [];
+      out.push({k:"dev", name:"host/filtrowanie-u-zrodla.txt", label:"filtrowanie u źródła", data:srcGuide(t, roles||[], prof)});
+      return out;
+    };
+  }
+})();
 /* ===================== APLIKACJA ===================== */
 const $ = (s, r=document) => r.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -5836,6 +6350,8 @@ function render(){
   else if(U.view==="rules") m.innerHTML = rulesHTML();
   else if(U.view==="vault") m.innerHTML = vaultHTML();
   else if(U.view==="audit") m.innerHTML = auditHTML();
+  wireCollapse();
+  if(location.hash.startsWith("#s-")) colOpen(location.hash.slice(1));
 }
 function renderChip(){
   const c = $("#vchip"), t = $("#vchip-t"); let s="demo", txt="Dane przykładowe, bez zapisu";
@@ -6175,12 +6691,57 @@ function profBarHTML(t, roles){
   return `<div class="prof-bar" id="prof-bar"><span class="pl">Profil zbierania</span><div class="seg prof" role="group" aria-label="Profil zbierania">${PROF_KEYS.map(p=>`<button type="button" data-act="prof" data-v="${p}" aria-pressed="${U.prof===p}">${PROFILES[p].name} <span>${n(p)}</span></button>`).join("")}</div>
     <p>${esc(PROFILES[U.prof].desc)}</p></div>`;
 }
+const WAYS = [
+  {n:"A. U źródła", f:"host/filtrowanie-u-zrodla.txt", plus:"Nie kosztuje CPU hosta, miejsca w dzienniku, pasma ani licencji. Dziennik na hoście dłużej trzyma materiał śledczy.", minus:"Zmiana to wdrożenie na flotę: GPO, Ansible, konsola urządzenia."},
+  {n:"B1. Heavy Forwarder", f:"hf/props.conf + hf/transforms.conf", plus:"Jedno miejsce zmiany dla całej floty. Odrzucone zdarzenia nie liczą się do licencji.", minus:"Wymaga HF w ścieżce danych. Host generuje zdarzenia, a pasmo do HF płacisz w całości."},
+  {n:"B2. Indekser", f:"idx/props.conf + idx/transforms.conf", plus:"Działa przy wysyłce UF prosto do indekserów. Oszczędza licencję i miejsce na dysku.", minus:"Wdrożenie na wszystkie peery (klaster: bundle i rolling restart). Nie oszczędza pasma, a parsowanie obciąża indeksery."}
+];
+function waysHTML(t){
+  const on = typeof hfHas === "function" && hfHas(t, []);
+  const ws = on ? WAYS : WAYS.slice(0,1);
+  return `<div class="ways">${ws.map(w=>`<div class="way"><b>${esc(w.n)}</b><code>${esc(w.f)}</code><span class="yes">${esc(w.plus)}</span><span class="no">${esc(w.minus)}</span></div>`).join("")}</div>`;
+}
 function fltHTML(t){
   const rows = fltRows(t); if(!rows.length) return "";
   return `<div class="sec" id="s-flt"><h3>Gdzie filtrować <small>odcinaj szum tam, gdzie powstaje</small></h3>
     <p class="sec-intro">Kolejność: najpierw źródło (polityka audytu, Sysmon, auditd, poziom logowania urządzenia), potem relay lub konektor, na końcu Splunk. Zdarzenie wycięte u źródła nie obciąża hosta, sieci ani licencji. W Splunku UF filtruje po treści tylko kanały Windows (whitelist/blacklist); pozostały szum usuwa nullQueue na Heavy Forwarderze lub indekserze.</p>
+    ${waysHTML(t)}
     <div class="flt">${rows.map(r=>`<div class="fr"><b>${esc(r.co)}</b><span class="fw fw-${esc(r.key)}">${esc(r.gdzie)}</span><span>${esc(r.jak)}${r.rx?` <code>${esc(r.rx)}</code>`:""}</span></div>`).join("")}</div></div>`;
 }
+/* ---------- zwijanie sekcji i bloków ---------- */
+const COL = {};
+try{ Object.assign(COL, JSON.parse(localStorage.getItem("siemmap.col") || "{}")); }catch(e){}
+function colSave(){ try{ localStorage.setItem("siemmap.col", JSON.stringify(COL)); }catch(e){} }
+function colKey(el, head){ return el.dataset.ck || el.id || "h:" + (head.textContent || "").trim().slice(0, 70); }
+function colSet(el, on){
+  el.classList.toggle("col", on);
+  const h = el.querySelector(":scope > .col-h"); if(h) h.setAttribute("aria-expanded", on ? "false" : "true");
+  COL[el.dataset.colk] = on ? 1 : 0; colSave();
+}
+function wireCollapse(scope){
+  const root = scope || $("#main"); if(!root) return;
+  for(const el of root.querySelectorAll(".sec, .cblk")){
+    if(el.dataset.col === "1") continue;
+    const head = el.querySelector(":scope > h3, :scope > .cblk-h"); if(!head || !head.nextSibling) continue;
+    const body = document.createElement("div"); body.className = "sec-body";
+    while(head.nextSibling) body.appendChild(head.nextSibling);
+    el.appendChild(body); el.dataset.col = "1";
+    const key = colKey(el, head); el.dataset.colk = key;
+    head.classList.add("col-h"); head.setAttribute("role", "button"); head.setAttribute("tabindex", "0");
+    head.insertBefore(Object.assign(document.createElement("span"), {className:"col-i", textContent:"▾"}), head.firstChild);
+    const start = key in COL ? COL[key] === 1 : el.classList.contains("col-off");
+    colSet(el, start);
+    const tog = e => { if(e.target.closest("button:not(.col-h), a, input, select, textarea")) return;
+      if(e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return; e.preventDefault(); colSet(el, !el.classList.contains("col")); };
+    head.addEventListener("click", tog); head.addEventListener("keydown", tog);
+  }
+}
+function colAll(on, scope){
+  const root = scope || $("#main"); if(!root) return;
+  for(const el of root.querySelectorAll(".sec[data-colk], .cblk[data-colk]")) colSet(el, on);
+}
+function colOpen(id){ const el = document.getElementById(id); if(!el) return; if(el.classList.contains("col")) colSet(el, false); }
+window.addEventListener("hashchange", () => { if(location.hash.startsWith("#s-")){ const id = location.hash.slice(1); colOpen(id); const el = document.getElementById(id); if(el) el.scrollIntoView({block:"start"}); } });
 function pkgTitle(t, roles){ const T=KB[t]; return T.name + (roles.length ? " · " + roleNames(t,roles).join(" + ") : " · tylko podstawa"); }
 function pkgHTML(ctx){
   const {t, roles, scope, mode} = ctx; const T = KB[t]; const L = layersOf(t, roles);
@@ -6195,7 +6756,7 @@ function pkgHTML(ctx){
   return `<section class="pkg" id="pkg">
    <div class="pkg-head"><div><h2>${esc(pkgTitle(t,roles))}</h2>
      <p>${items.length} pozycji (${p1n} P1)${mode==="host"?"":mode==="bulk"?` · stany dla <b>${hosts.length}</b> ${hosts.length===1?"hosta":"hostów"} pasujących do wyboru`:" · brak hostów tego typu w inwentarzu, pakiet w trybie podglądu"}.</p></div>
-     <div class="btns"><button class="btn primary" type="button" data-act="pkg-zip">Pobierz pakiet (.zip)</button><button class="btn" type="button" data-act="pkg-md">README (.md)</button></div></div>
+     <div class="btns"><button class="btn sm ghost" type="button" data-act="sec-all" data-v="1">Zwiń wszystko</button><button class="btn sm ghost" type="button" data-act="sec-all" data-v="0">Rozwiń wszystko</button><button class="btn primary" type="button" data-act="pkg-zip">Pobierz pakiet (.zip)</button><button class="btn" type="button" data-act="pkg-md">README (.md)</button></div></div>
    ${profBarHTML(t, roles)}
    <nav class="pkg-nav" aria-label="Sekcje pakietu"><a href="#s-items">Co logować</a><a href="#s-dont">Czego nie logować</a>${(FLT[t]||[]).length?`<a href="#s-flt">Gdzie filtrować</a>`:""}<a href="#s-tips">Na co zwrócić uwagę</a><a href="#s-cfg">Konfiguracje</a><a href="#s-test">Test po wdrożeniu</a><a href="#s-det">Detekcje</a>${mode==="host"?`<a href="#s-hist">Historia zmian</a>`:""}</nav>
    <div class="sec" id="s-items"><h3>Co logować <small>podstawa typu + wybrane role</small></h3>
@@ -6270,9 +6831,9 @@ function cfgHTML(ctx){
     const txt = composeCfg(t, roles, k, prof);
     const cust = L.some(l=>S && S.custom.cfg[l.key] && S.custom.cfg[l.key][k]!=null);
     return tabs + noteHTML + bar + (txt.trim() ? `${cust?`<p class="note"><span class="badge">Zawiera Twoją wersję</span> co najmniej jednej warstwy.</p>`:""}<pre class="code cfg-file">${esc(txt)}</pre>` : `<p class="sec-intro">Brak szablonu dla tej zakładki.</p>`)
-      + (wx.rules ? `<div class="cblk"><div class="cblk-h"><span><b>local_rules.xml</b> <span class="note">manager Wazuh</span></span></div><pre class="code">${esc(wx.rules)}</pre></div>` : "")
-      + (wx.decoders ? `<div class="cblk"><div class="cblk-h"><span><b>local_decoder.xml</b> <span class="note">manager Wazuh</span></span></div><pre class="code">${esc(wx.decoders)}</pre></div>` : "")
-      + ex.map(e=>`<div class="cblk"><div class="cblk-h"><span><b>${esc(e.label)}</b> <span class="note">${esc(e.name)} · profil ${esc(PROFILES[prof].name)}</span></span></div><pre class="code cfg-file">${esc(e.data)}</pre></div>`).join("")
+      + (wx.rules ? `<div class="cblk col-off" data-ck="x-wazuh-rules"><div class="cblk-h"><span><b>local_rules.xml</b> <span class="note">manager Wazuh</span></span></div><pre class="code">${esc(wx.rules)}</pre></div>` : "")
+      + (wx.decoders ? `<div class="cblk col-off" data-ck="x-wazuh-decoders"><div class="cblk-h"><span><b>local_decoder.xml</b> <span class="note">manager Wazuh</span></span></div><pre class="code">${esc(wx.decoders)}</pre></div>` : "")
+      + ex.map(e=>`<div class="cblk col-off" data-ck="x-${esc(e.name)}"><div class="cblk-h"><span><b>${esc(e.label)}</b> <span class="note">${esc(e.name)} · profil ${esc(PROFILES[prof].name)}</span></span></div><pre class="code cfg-file">${esc(e.data)}</pre></div>`).join("")
       + `<p class="note">Gotowy plik łączy podstawę i wybrane role dla profilu <b>${esc(PROFILES[prof].name)}</b>: powtórzone stanze Splunka, klucze YAML i kanały są scalane, reguły i dekodery Wazuh trafiają do osobnych plików managera. Paczka .zip zawiera wszystkie trzy profile.</p>`;
   }
   const blocks = L.map(l=>{
@@ -7128,7 +7689,7 @@ function rerenderPkg(){
   const pi = $("#pkg-items"); if(pi) pi.innerHTML = itemsHTML(ctx, layersOf(ctx.t, ctx.roles), hosts);
   if(U.view==="host"){ const h=hostById(U.host); const c=covOf(h); const m=$(".hhead .meta"); if(m) m.innerHTML = hostMeta(h, c); const hi=$("#s-hist"); if(hi) hi.outerHTML = hostHistoryHTML(h); }
 }
-function rerenderCfg(){ const el=$("#pkg-cfg"); if(el && U.ctx) el.innerHTML = cfgHTML(U.ctx); }
+function rerenderCfg(){ const el=$("#pkg-cfg"); if(el && U.ctx){ el.innerHTML = cfgHTML(U.ctx); wireCollapse(el); } }
 function itemLabel(k){ const [t,l,...rest] = k.split("."); const id = rest.join("."); const L = l==="_base" ? KB[t].base : KB[t].roles[l]; const it = L && (L.items||[]).find(x=>x[0]===id); return it ? it[1] : k; }
 let adRoles = [];
 const MUT = new Set(["logo","word","bulk-ver","bulk-del","bulk-edit","bulk-pkg","h-role","h-ver","h-dup","h-del","st","del-custom","cfg-edit","cfg-save","cfg-reset","wipe","import","pick-file","imp-paste","imp-apply","add-go","ad-role","bulk-go","u-reset","u-del"]);
@@ -7174,6 +7735,7 @@ document.addEventListener("click", async e=>{
     case "cfg-reset": { const l=el.dataset.l; if(S.custom.cfg[l]){ delete S.custom.cfg[l][U.tab]; if(!Object.keys(S.custom.cfg[l]).length) delete S.custom.cfg[l]; } audit("cfg", {o:l}, `przywrócono szablon (${U.tab})`); changed(false); rerenderCfg(); break; }
     case "cfg-copy": copyText(composeCfg(U.ctx.t,U.ctx.roles,U.tab)); break;
     case "cfg-dl": { const f = PROFILES[U.prof].dir + "-" + KB[U.ctx.t].files[U.tab].split("/").pop(); saveFile(dlName(f), composeCfg(U.ctx.t,U.ctx.roles,U.tab)); break; }
+    case "sec-all": colAll(v==="1"); break;
     case "cfg-dl-e": { const e = extraFiles(U.ctx.t,U.ctx.roles,U.prof)[+v]; if(e) saveFile(dlName(PROFILES[U.prof].dir + "-" + e.name.split("/").pop()), e.data); break; }
     case "cfg-dl-x": { const x = wazuhExtra(U.ctx.t,U.ctx.roles,U.prof); saveFile(dlName(PROFILES[U.prof].dir + "-" + (v==="rules"?"local_rules.xml":"local_decoder.xml")), v==="rules"?x.rules:x.decoders); break; }
     case "prof": { U.prof = v; try{ localStorage.setItem("siemmap.prof", v); }catch(e){} const pb=$("#prof-bar"); if(pb && U.ctx) pb.outerHTML = profBarHTML(U.ctx.t, U.ctx.roles); rerenderPkg(); rerenderCfg(); break; }
